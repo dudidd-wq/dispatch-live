@@ -1,0 +1,7 @@
+# cmd.exe needs CRLF and pure ASCII in batch files. -text stores them byte for
+# byte, so a clone, a checkout and GitHub's "Download ZIP" all give CRLF.
+*.bat -text
+*.py  text eol=lf
+*.sh  text eol=lf
+*.command text eol=lf
+*.html text eol=lf

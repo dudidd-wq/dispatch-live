@@ -1,0 +1,17 @@
+# secrets - never commit
+google.key
+*.key
+config.local.json
+waze-mirror.on
+
+# runtime state
+data/
+logos/
+*.log
+
+# python / node / editors
+__pycache__/
+*.pyc
+node_modules/
+.vscode/
+.idea/

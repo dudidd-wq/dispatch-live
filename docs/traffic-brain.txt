@@ -1,0 +1,53 @@
+TRAFFIC BRAIN  -  the traffic service that lives in this folder
+================================================================
+
+WHAT IT IS
+  brain.py is a standalone service (port 3200). It learns the weekly rhythm
+  of the Gush Dan arteries from a few cheap samples, predicts from that model
+  for free, and buys a real measurement from Google only when there is reason
+  to believe the model is wrong.
+
+  The deck (server.py, port 3100) only relays what the brain publishes.
+  There is exactly ONE place that can spend a Google call: the brain.
+
+SETUP  (once)
+  1. Put your Google Routes API key in a file named  google.key  in this
+     folder. Only the key, nothing else.
+       PowerShell:  Set-Content -NoNewline -Path google.key -Value "YOUR_KEY"
+  2. That is all. Start-Dispatch-LIVE.bat starts both services.
+
+WITHOUT A KEY
+  Everything still runs. The traffic chip stays quiet and nothing is spent.
+
+RUNNING
+  Start-Dispatch-LIVE.bat   starts the brain (minimised) + the deck
+  Stop-Dispatch.bat         closes both
+  Check-Running.bat         shows what is up on ports 3100 and 3200
+
+  The brain window may be minimised but should stay open - that is what
+  keeps the model learning.
+
+BUDGET  (why this stays free)
+  Google gives 5,000 traffic-aware calls per month at no cost.
+    hard ceiling in brain.py : 4,500 / month  and  240 / day
+    learning pace            : ~8 measurements a day  (~1,400 / month)
+    steady pace              : ~5 a day               (~900 / month)
+  When the ceiling is reached the brain stops spending and keeps predicting.
+  Extra belt: in Google Cloud set the Routes API daily quota to 160, and
+  overspending becomes impossible at the source.
+
+WHAT TO EXPECT
+  day 1     first measurements, everything marked  measured
+  week 1    coverage ~25%, predictions start filling the gaps
+  week 2-3  coverage over 55% -> steady phase, fewer measurements
+  always    an incident, alert or storm triggers an immediate measurement
+
+CHECKING IT WORKS
+  http://localhost:3200/model     samples should rise day over day
+  http://localhost:3200/traffic   current state, per segment
+  http://localhost:3100/          the deck itself
+
+FILES
+  data/model.json   the learned profile. THIS IS THE ASSET - back it up.
+  data/state.json   budget counters and last measurements.
+  Deleting data/ resets the learning and starts over.
