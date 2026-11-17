@@ -150,6 +150,22 @@ class TestBudgetIsAWall(Base):
         self.assertEqual(brain.STATE["usedMonth"], 0)
         self.assertGreater(self.sent, 0)
 
+    def test_a_certificate_failure_is_not_charged_and_stops_the_batch(self):
+        import ssl
+        self._fake(fail=urllib.error.URLError(ssl.SSLCertVerificationError("certificate verify failed")))
+        brain.verify(reason="manual", n=5, force_all=True)
+        self.assertEqual(self.sent, 1)                       # the rest would fail the same way
+        self.assertEqual(brain.STATE["usedMonth"], 0)        # nothing reached Google
+        self.assertIn("certificate", (brain.STATE.get("lastError") or {}).get("hint", "").lower() + str(brain.STATE.get("lastError")).lower())
+
+    def test_no_route_to_google_is_not_charged(self):
+        import socket
+        for err in (urllib.error.URLError(socket.gaierror("name not known")), urllib.error.URLError(ConnectionRefusedError())):
+            self.sent = 0; brain.STATE["usedMonth"] = 0; brain.STATE["usedDay"] = 0
+            self._fake(fail=err)
+            brain.verify(reason="manual", n=4, force_all=True)
+            self.assertEqual((self.sent, brain.STATE["usedMonth"]), (1, 0), err)
+
     def test_zero_cap_means_no_calls(self):
         self._fake()
         cap = brain.MONTHLY_CAP

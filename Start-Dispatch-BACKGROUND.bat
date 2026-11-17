@@ -32,8 +32,10 @@ start "" !PYW! server.py
 exit /b 0
 
 :already
-REM Server is already up - just open the deck.
-start "" http://localhost:3100
+REM Server is already up - just open the deck, in Edge with the same flags the
+REM server uses, so the window can sound the siren and is not throttled.
+start "" msedge --app=http://localhost:3100 --autoplay-policy=no-user-gesture-required --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows --disable-features=IntensiveWakeUpThrottling,CalculateNativeWinOcclusion 2>nul
+if errorlevel 1 start "" http://localhost:3100
 exit /b 0
 
 :nopythonw

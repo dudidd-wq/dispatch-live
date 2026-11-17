@@ -14,7 +14,7 @@ echo ""
 
 # --- Close anything already listening on port 3100 (clean restart) ---
 if command -v lsof >/dev/null 2>&1; then
-  OLDPID=$(lsof -ti tcp:3100 2>/dev/null)
+  OLDPID=$(lsof -ti tcp:3100 -sTCP:LISTEN 2>/dev/null)
   if [ -n "$OLDPID" ]; then
     echo "  Closing old server on port 3100 (PID $OLDPID)..."
     kill -9 $OLDPID 2>/dev/null
@@ -38,7 +38,7 @@ fi
 
 # --- Traffic Brain (port 3200), stopped together with the deck ---
 BRAIN=""
-if [ -f brain.py ] && ! (command -v lsof >/dev/null 2>&1 && lsof -ti tcp:3200 >/dev/null 2>&1); then
+if [ -f brain.py ] && ! (command -v lsof >/dev/null 2>&1 && lsof -ti tcp:3200 -sTCP:LISTEN >/dev/null 2>&1); then
   "$PY" brain.py >/dev/null 2>&1 &
   BRAIN=$!
 fi

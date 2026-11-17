@@ -1,0 +1,643 @@
+{
+ "source": "https://www.oref.org.il/alerts/alertsTranslation.json",
+ "fetched": "2026-11-17",
+ "entries": [
+  {
+   "catId": 13,
+   "matrixCatId": 10,
+   "hebTitle": "פיקוד העורף מעדכן",
+   "heb": "עליך לשפר את מיקומך למיגון המיטבי בקרבתך.\r\nבמקרה של קבלת התרעה, יש להיכנס למרחב המוגן ולשהות בו 10 דקות.",
+   "engTitle": "Home Front Command update"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "פיקוד העורף מעדכן",
+   "heb": "עליך לשפר את מיקומך למיגון המיטבי בקרבתך.\r\nבמקרה של קבלת התרעה, יש להיכנס למרחב המוגן ולשהות בו 10 דקות.",
+   "engTitle": "Home Front Command update"
+  },
+  {
+   "catId": 1,
+   "matrixCatId": 1,
+   "hebTitle": "ירי רקטות וטילים - היכנסו למרחב המוגן",
+   "heb": "יש להיכנס למרחב מוגן בזמן ההתגוננות העומד לרשותכם.",
+   "engTitle": "Missile and rocket attack - Enter protected space"
+  },
+  {
+   "catId": 2,
+   "matrixCatId": 6,
+   "hebTitle": "כלי טייס עוין - היכנסו מייד למרחב המוגן",
+   "heb": "יש להיכנס במהירות האפשרית למרחב מוגן.",
+   "engTitle": "Hostile aerial vehicle - Enter protected space now"
+  },
+  {
+   "catId": 11,
+   "matrixCatId": 5,
+   "hebTitle": "חשש לצונמי - התרחקו מייד מחוף הים",
+   "heb": "יש להתרחק מייד מחוף הים קילומטר אחד לפחות ואם לא ניתן, לעלות לקומה רביעית ומעלה במבנה קרוב.",
+   "engTitle": "Fear of Tsunami - Move away from the beach now"
+  },
+  {
+   "catId": 7,
+   "matrixCatId": 3,
+   "hebTitle": "רעידת אדמה - צאו לשטח פתוח",
+   "heb": "יש לצאת מייד לשטח פתוח. אם לא ניתן, יש להיכנס לממ\"ד ולהשאיר את הדלת פתוחה או לצאת לחדר מדרגות.\r\nרק אם לא ניתן לפעול כך - יש לשבת בפינה פנימית של החדר או תחת רהיט כבד ולהגן על הראש עם הידיים.",
+   "engTitle": "Earthquake - Go out to an open area"
+  },
+  {
+   "catId": 8,
+   "matrixCatId": 3,
+   "hebTitle": "רעידת אדמה - צאו לשטח פתוח",
+   "heb": "יש לצאת מייד לשטח פתוח. אם לא ניתן, יש להיכנס לממ\"ד ולהשאיר את הדלת פתוחה או לצאת לחדר מדרגות.\r\nרק אם לא ניתן לפעול כך - יש לשבת בפינה פנימית של החדר או תחת רהיט כבד ולהגן על הראש עם הידיים.",
+   "engTitle": "Earthquake - Go out to an open area"
+  },
+  {
+   "catId": 9,
+   "matrixCatId": 4,
+   "hebTitle": "אירוע רדיולוגי",
+   "heb": "היכנסו למבנה וסגרו את הדלתות והחלונות",
+   "engTitle": "Radiological event"
+  },
+  {
+   "catId": 15,
+   "matrixCatId": 101,
+   "hebTitle": "תרגיל ירי רקטות וטילים",
+   "heb": "ברגעים אלה נשמעת אזעקה במסגרת תרגיל פיקוד העורף",
+   "engTitle": "Rocket and missile fire drill"
+  },
+  {
+   "catId": 21,
+   "matrixCatId": 103,
+   "hebTitle": "תרגיל רעידת אדמה",
+   "heb": "ברגעים אלה מתקיים תרגיל רעידות אדמה",
+   "engTitle": "Earthquake drill"
+  },
+  {
+   "catId": 22,
+   "matrixCatId": 103,
+   "hebTitle": "תרגיל רעידת אדמה",
+   "heb": "ברגעים אלה מתקיים תרגיל רעידות אדמה",
+   "engTitle": "Earthquake drill"
+  },
+  {
+   "catId": 10,
+   "matrixCatId": 13,
+   "hebTitle": "חדירת מחבלים - היכנסו מייד למרחב המוגן",
+   "heb": "יש להיכנס מייד למרחב מוגן, לסגור היטב את הדלת ולשבת מתחת לקו חלונות.אם אין מרחב מוגן - היכנסו למקום מסתור.  אין לצאת עד לקבלת הנחיה מפורשת מהגופים הרשמיים.",
+   "engTitle": "Terrorist infiltration - Enter protected space now"
+  },
+  {
+   "catId": 12,
+   "matrixCatId": 7,
+   "hebTitle": "אירוע חומרים מסוכנים - הסתגרו מייד במבנה",
+   "heb": "בשל חשש לאירוע חומרים מסוכנים, יש להיכנס מייד למבנה - לסגור דלתות וחלונות ולכבות את המזגן. \r\nאין לצאת מהמבנה עד לקבלת הנחיה מפורשת. התנועה באזור אסורה.\r\nשוהים בשטח פתוח - יש להתרחק מהאזור. \r\nנוסעים ברכב - יש לעצור בצד ולסגור חלונות ומזגן.",
+   "engTitle": "HAZMAT incident - Seclude indoors immediately"
+  },
+  {
+   "catId": 25,
+   "matrixCatId": 105,
+   "hebTitle": "תרגיל צונאמי",
+   "heb": "ברגעים אלה מתקיים תרגיל צונאמי",
+   "engTitle": "Tsunami drill"
+  },
+  {
+   "catId": 26,
+   "matrixCatId": 107,
+   "hebTitle": "תרגיל חומרים מסוכנים",
+   "heb": "ברגעים אלה מתקיים תרגיל חומרים מסוכנים",
+   "engTitle": "Hazardous Materials drill"
+  },
+  {
+   "catId": 24,
+   "matrixCatId": 113,
+   "hebTitle": "תרגיל חדירת מחבלים",
+   "heb": "ברגעים אלה מתקיים תרגיל חדירת מחבלים",
+   "engTitle": "Terrorist infiltration drill"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "המשך שהייה בסמוך למרחב המוגן",
+   "heb": "יש להמשיך לשהות בסמוך למרחב מוגן ולהימנע משהייה ומתנועה בחוץ שלא לצורך חיוני.",
+   "engTitle": "Continue staying near the protected space!"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "יש להמשיך לשהות במרחב המוגן",
+   "heb": "על תושבי האזורים הבאים להמשיך לשהות במרחב המוגן עד לקבלת הודעה חדשה.",
+   "engTitle": "You must continue to stay in the Protected space"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "היכנסו מיד למרחב המוגן",
+   "heb": "על תושבי האזורים הבאים להיכנס מיד למרחב המוגן ולשהות בו עד לקבלת הודעה חדשה.\r\nבעת קבלת התרעה אין לצאת מהמרחב המוגן גם לא בחלוף 10 דקות. \r\nשימו לב! יציאה מהמרחב המוגן תתאפשר לאחר קבלת הנחייה מפורשת.",
+   "engTitle": "Immediately enter a Protected Space"
+  },
+  {
+   "catId": 13,
+   "matrixCatId": 10,
+   "hebTitle": "ניתן לצאת מהמרחב המוגן",
+   "heb": "באזורים הבאים ניתן לצאת מהמרחב המוגן.",
+   "engTitle": "You can leave the Protected Space"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "היכנסו מייד למרחב המוגן",
+   "heb": "יש להיכנס מייד למרחב המוגן ולשהות בו עד לקבלת הנחיה מפורשת. \r\nיציאה מהמרחב המוגן בעת הזו מסכנת חיים.",
+   "engTitle": "Enter the protected space immediately!"
+  },
+  {
+   "catId": 13,
+   "matrixCatId": 10,
+   "hebTitle": "ניתן לצאת מהמרחב המוגן אך יש להישאר בקרבתו",
+   "heb": "באזורים הבאים ניתן לצאת מהמרחב המוגן, אך יש להישאר בקרבתו.",
+   "engTitle": "You can leave the Protected Space, stay close"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "יש לשהות בסמיכות למרחב המוגן",
+   "heb": "על תושבי האזורים הבאים לשהות בסמיכות למרחב המוגן, לצמצם תנועות במרחב ולהימנע מהתקהלויות.",
+   "engTitle": "Staying close to a Protected Space"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "המשיכו לשהות בסמיכות למרחב המוגן",
+   "heb": "עליכם להמשיך לשהות בסמיכות למרחב מוגן.\r\nיש להימנע משהייה ומתנועה בחוץ שלא לצורך חיוני.\r\nלהנחיות המלאות",
+   "engTitle": "Continue to stay next to a protected space"
+  },
+  {
+   "catId": 13,
+   "matrixCatId": 10,
+   "hebTitle": "סיום שהייה בסמיכות למרחב המוגן",
+   "heb": "תושבי האזורים הבאים אינם צריכים לשהות יותר בסמיכות למרחב המוגן.",
+   "engTitle": "You can leave the buildings"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "בדקות הקרובות צפויות להתקבל התרעות באזורך",
+   "heb": "על תושבי האזורים הבאים לשפר את המיקום למיגון המיטבי בקרבתך.\r\nבמקרה של קבלת התרעה, יש להיכנס למרחב המוגן ולשהות בו עד להודעה חדשה.",
+   "engTitle": "In a few minutes, alerts are expected in your area"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "הגברת מוכנות",
+   "heb": "בשל היערכות לאיום משמעותי יש להישמע להנחיות פיקוד העורף המופצות ברגעים אלו בכלל אמצעי התקשורת.",
+   "engTitle": "Increasing readiness"
+  },
+  {
+   "catId": 13,
+   "matrixCatId": 10,
+   "hebTitle": "ירי רקטות וטילים -  האירוע הסתיים",
+   "heb": "השוהים במרחב המוגן יכולים לצאת.\r\nבעת קבלת הנחיה או התרעה, יש לפעול בהתאם להנחיות פיקוד העורף.",
+   "engTitle": "Rocket and Missile Attack - the event has ended"
+  },
+  {
+   "catId": 13,
+   "matrixCatId": 10,
+   "hebTitle": "חדירת מחבלים -  החשש הוסר",
+   "heb": "באזורים הבאים נשלל חשש לאירוע חדירת מחבלים.\r\nהתושבים יכולים לצאת מהבתים ולנוע באזור ללא הגבלה.",
+   "engTitle": "Terrorist Infiltration – the threat has ended"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "שהייה בסמיכות למרחב מוגן",
+   "heb": "על תוושבי האזורים הבאים לשהות בסמיכות למרחב המוגן.\r\nיש לצמצם תנועות במרחב ולהימנע מהתקהלויות.\r\n בעת קבלת התרעה יש להיכנס למרחב מוגן ולשהות בו עד לקבלת הודעה חדשה.",
+   "engTitle": "Staying next to a Protected Space"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "אירוע חומרים מסוכנים - המשך שהייה במבנה",
+   "heb": "על תושבי האזורים הבאים להמשיך לשהות במבנה עד להודעה חדשה.  ודאו שהדלתות והחלונות סגורים, והמזגן כבוי. אין לצאת מהמבנה עד לקבלת הנחיה מפורשת.",
+   "engTitle": "Hazmat Event - continue staying indoors"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "יש להישמע להנחיות פיקוד העורף",
+   "heb": "בשל היערכות לאיום משמעותי יש להישמע במיידי להנחיות פיקוד העורף המופצות ברגעים אלו בכלל אמצעי התקשורת.",
+   "engTitle": "Adhere to the Home Front Command guidelines"
+  },
+  {
+   "catId": 13,
+   "matrixCatId": 10,
+   "hebTitle": "הסתיים אירוע חדירת מחבלים - ניתן לצאת מהבתים",
+   "heb": "באזורים הבאים הסתיים אירוע חדירת מחבלים.\r\nניתן לצאת מהבתים ולנוע באזור ללא הגבלה.",
+   "engTitle": "End of Terrorist Infiltration - you may go out"
+  },
+  {
+   "catId": 13,
+   "matrixCatId": 10,
+   "hebTitle": "חומרים מסוכנים - האירוע הסתיים",
+   "heb": "בהמשך לטיפול באירוע חומרים מסוכנים שהתרחש באזורים הבאים - הסכנה חלפה.\r\nניתן לצאת ממבנים.",
+   "engTitle": "Hazardous Materials - the event has ended"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "חדירת מחבלים - אין לצאת מהמרחב המוגן",
+   "heb": "באזורים הבאים זוהתה חדירת מחבלים.\r\nהישארו במרחב המוגן והימנעו משהייה מול הדלת והחלון.\r\nהתנועה באזור אסורה.\r\nצה\"ל וכוחות הביטחון מטפלים באירוע. באירוע חריג, צרו קשר עם כוחות הביטחון.",
+   "engTitle": "Terrorist Infiltration– stay in a Protected Space"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "שהו בסמוך למרחב מוגן",
+   "heb": "יש לשהות בסמוך למרחב מוגן שניתן להגיע אליו בזמן ההתגוננות ולהימנע מתנועה שלא לצורך חיוני.",
+   "engTitle": "Stay near the protected space!"
+  },
+  {
+   "catId": 13,
+   "matrixCatId": 10,
+   "hebTitle": "אירוע חומרים מסוכנים - הסכנה באזורכם חלפה",
+   "heb": "באזורים הבאים ניתן לצאת מהמבנה.",
+   "engTitle": "Hazmat Event - it is no longer dangerous"
+  },
+  {
+   "catId": 13,
+   "matrixCatId": 10,
+   "hebTitle": "חדירת כלי טיס עוין - האירוע הסתיים",
+   "heb": "באזורים הבאים בהמשך לדיווח על הפעלת התרעה על כניסת כלי טיס עוין לשמי ישראל - האירוע הסתיים.",
+   "engTitle": "Hostile Aerial Vehicle Infiltration - event ended"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "סכנת פיצוץ והדף חזק - יש להמשיך לשהות במרחב המוגן",
+   "heb": "עקב סכנת פיצוץ והדף במפעל באזורך,  יש להישאר במרחב המוגן עד לקבלת הודעה חדשה.",
+   "engTitle": "Danger - Continue to Stay in the Protected Space"
+  },
+  {
+   "catId": 13,
+   "matrixCatId": 10,
+   "hebTitle": "סכנת פיצוץ והדף חזק - ניתן לצאת מהמרחב המוגן",
+   "heb": "באזורים הבאים ניתן לצאת מהמרחב המוגן.",
+   "engTitle": "Risk of explosion and strong blast"
+  },
+  {
+   "catId": 13,
+   "matrixCatId": 10,
+   "hebTitle": "האירוע הסתיים",
+   "heb": "השוהים במרחב המוגן יכולים לצאת.\r\nבעת קבלת הנחיה או התרעה, יש לפעול בהתאם להנחיות פיקוד העורף.",
+   "engTitle": "The event has ended"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "סכנת פיצוץ והדף חזק - היכנסו מייד למרחב המוגן",
+   "heb": "עקב סכנת פיצוץ והדף במפעל באזורך, יש להיכנס מייד למרחב המוגן עד להודעה חדשה.",
+   "engTitle": "Danger - Enter the Protected Space immediately"
+  },
+  {
+   "catId": 13,
+   "matrixCatId": 10,
+   "hebTitle": "התרעה על צונמי  - ניתן לחזור לשגרה",
+   "heb": "הופעלה התרעה על חשש לצונמי. \r\n הערכת מצב מעלה כי לא צפוי לפגוע צונמי באזורנו.\r\nניתן לחזור לשגרה מלאה.",
+   "engTitle": "Tsunami alert - You can resume routine activities"
+  },
+  {
+   "catId": 13,
+   "matrixCatId": 10,
+   "hebTitle": "אירוע בקריה למחקר גרעיני בנגב  – ניתן לצאת ממבנים",
+   "heb": "בהמשך לאירוע שהתרחש בקרייה למחקר גרעיני בנגב, ניתן לצאת מהמבנים.",
+   "engTitle": "Event in the NRC area – You may leave the building"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "רעידת אדמה - הישארו בשטח פתוח",
+   "heb": "בהמשך לרעידת האדמה, יש לשהות בשטח פתוח עד לקבלת הנחיה מפורשת. \r\nיש להתרחק ממבנים, מעצים וּמֵעמודי חשמל, ולהישמע להוראות כוחות הביטחון וההצלה בשטח. \r\nיש להתעדכן בהנחיות המופצות על ידי הגורמים הרשמיים.",
+   "engTitle": "Earthquake - Stay in an open area!"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "אירוע צונמי - הישארו הרחק מחוף הים",
+   "heb": "בעקבות אירוע צונמי שהתרחש בחופי ישראל, אין לשוב לאזורים בסביבת החוף ב-12 השעות הקרובות. \r\nכוחות הביטחון פועלים לחילוץ לכודים ולמתן סיוע לנפגעים. \r\nהמשיכו להתעדכן בהודעות המופצות באמצעי התקשורת.",
+   "engTitle": "Fear of Tsunami - Stay far away from the beach!"
+  },
+  {
+   "catId": 13,
+   "matrixCatId": 10,
+   "hebTitle": "אירוע במרכז למחקר גרעיני בשורק  – ניתן לצאת ממבנים",
+   "heb": "בהמשך לאירוע שהתרחש במרכז למחקר גרעיני בשורק, ניתן לצאת מהמבנים.",
+   "engTitle": "Event in the NRC area – You may leave the building"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "אירוע צונמי - אין לשוב לחופי הים",
+   "heb": "בעקבות אירוע צונמי שהתרחש בחופי ישראל, אין לשוב לאזורים בסביבת החוף ב-12 השעות הקרובות. \r\nכוחות הביטחון פועלים לחילוץ לכודים ולמתן סיוע לנפגעים. \r\nהמשיכו להתעדכן בהודעות המופצות באמצעי התקשורת.",
+   "engTitle": "Tsunami Event - Do Not Return to the Beach"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "בדקות הקרובות צפויות להתקבל התרעות באזורים הבאים:",
+   "heb": "על תושבי האיזורים הבאים לשפר את מיקומם למיגון המיטבי בקרבתם. במקרה של קבלת התרעה, יש להיכנס למרחב המוגן ולשהות בו 10 דקות.",
+   "engTitle": "In a few minutes, alerts are expected in:"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "התקרבו למרחב המוגן",
+   "heb": "בדקות הקרובות צפויות להתקבל התרעות באזורך. \r\nעליך לשפר את מיקומך למיגון המיטבי בקרבתך.\r\nבמקרה של קבלת התרעה, יש להיכנס למרחב המוגן ולשהות בו 10 דקות.",
+   "engTitle": "Move closer to the protected space"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "אירוע במרחב הקרייה למחקר גרעיני  - היכנסו למבנה",
+   "heb": "בהמשך לאירוע בשטח הקרייה למחקר גרעיני בנגב , עליכם לשהות במבנה, לסגור חלונות ודלתות ולכבות את המזגנים עד לקבלת הודעה חדשה.\r\nכוחות הביטחון פועלים במקום ומבצעים את כלל הפעולות הנדרשות.\r\nיש להמשיך ולעקוב אחר הנחיות המתפרסמות באמצעי ההפצה הרשמיים.",
+   "engTitle": "Event in the area of the NRC - Enter a building"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "אירוע במרחב המרכז למחקר גרעיני - היכנסו למבנה",
+   "heb": "בהמשך לאירוע בשטח המרכז למחקר גרעיני בשורק, עליכם לשהות במבנה, לסגור חלונות ודלתות ולכבות את המזגנים עד לקבלת הודעה חדשה.\r\nכוחות הביטחון פועלים במקום ומבצעים את כלל הפעולות הנדרשות.\r\nיש להמשיך ולעקוב אחר הנחיות המתפרסמות באמצעי ההפצה הרשמיים.",
+   "engTitle": "Event in the area of the NRC - Enter a building"
+  },
+  {
+   "catId": 13,
+   "matrixCatId": 10,
+   "hebTitle": "התרעה על רעידת אדמה - ניתן לחזור לשגרה",
+   "heb": "מבדיקה שבוצעה על ידי המכון הגיאולוגי עולה כי לא התרחשה רעידת אדמה באזורנו.\r\nניתן לחזור לשגרה מלאה.",
+   "engTitle": "Earthquake Alert - You may resume routine activity"
+  },
+  {
+   "catId": 13,
+   "matrixCatId": 10,
+   "hebTitle": "בעקבות רעידת האדמה - הנחיות לחזרה למבנים",
+   "heb": "בהמשך לרעידת האדמה, הנכם יכולים לחזור לבתים שלא נגרם להם נזק נראה לעין. \r\nבמקרה שתתרחש רעידת אדמה נוספת, יש לפעול על פי ההנחיות ולהגיע למקום בטוח באופן מיידי.",
+   "engTitle": "Following an Earthquake –  Returning to Buildings"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "שיבושים במערך ההתרעה - יש לשהות במרחב מוגן",
+   "heb": "קיימים שיבושים במערך הצופרים וביישומון פיקוד העורף.\r\nיש לשהות במרחב המוגן עד שתתאפשר קבלת ההתרעה.",
+   "engTitle": "Alert system disruptions–Stay in a protected space"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "הנחיות בעקבות רעידת האדמה",
+   "heb": "בהמשך לרעידת האדמה, יש לשהות בשטח פתוח עד לקבלת הודעה חדשה. \r\nיש להתרחק ממבנים, מעצים וּמֵעמודי חשמל, ולהישמע להוראות כוחות הביטחון וההצלה בשטח. יש להמשיך ולהתעדכן בהנחיות ובמידע המופצים על ידי הגורמים הרשמיים.",
+   "engTitle": "Guidelines Following the Earthquake"
+  },
+  {
+   "catId": 13,
+   "matrixCatId": 10,
+   "hebTitle": "אירוע בקריה למחקר גרעיני - אין הנחיות לציבור",
+   "heb": "בהמשך לאירוע בשטח הקריה למחקר גרעיני בנגב - הציבור לא נדרש לנקוט בפעולות מיוחדות.\r\nיש להמשיך ולעקוב אחר הנחיות המתפרסמות באמצעי ההפצה הרשמיים.",
+   "engTitle": "Event in the N.R.C - No guidelines for the public"
+  },
+  {
+   "catId": 13,
+   "matrixCatId": 10,
+   "hebTitle": "אירוע במרכז למחקר גרעיני - אין הנחיות לציבור",
+   "heb": "בהמשך לאירוע בשטח המרכז למחקר גרעיני בשורק - הציבור לא נדרש לנקוט בפעולות מיוחדות.\r\nיש להמשיך ולעקוב אחר הנחיות המתפרסמות באמצעי ההפצה הרשמיים.",
+   "engTitle": "Event in the N.R.C - No guidelines for the public"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "המשך שהייה במרחב המוגן",
+   "heb": "יש להישאר במרחב המוגן עד לקבלת הנחיה מפורשת.",
+   "engTitle": "Continue staying in the protected space!"
+  },
+  {
+   "catId": 13,
+   "matrixCatId": 10,
+   "hebTitle": "אירוע בקריה למחקר גרעיני - ניתן לחזור לבתים",
+   "heb": "בהמשך לאירוע שהתרחש בקריה למחקר גרעיני בנגב - הטיפול באירוע הסתיים והסכנה חלפה. \r\nניתן לחזור לבתים. \r\nצוותי הניטור ביצעו מדידות ובדיקות מקיפות המעידות כי אין כרגע סיכון בריאותי.",
+   "engTitle": "Event at the N.R.C - You may return home"
+  },
+  {
+   "catId": 13,
+   "matrixCatId": 10,
+   "hebTitle": "סיום שהייה במרחב המוגן",
+   "heb": "ניתן לצאת מהמרחב המוגן.",
+   "engTitle": "End of stay in the protected space"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "יציאה ממרחב מוגן ושהייה בסמוך",
+   "heb": "ניתן לצאת מהמרחב המוגן, אך יש להישאר בסמוך אליו ולהימנע מתנועה בחוץ שלא לצורך חיוני.",
+   "engTitle": "Exiting the protected space and staying nearby"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "שיבושים בצופרים",
+   "heb": "ייתכן שלא ישמעו באזורך אזעקות מצופרי פיקוד העורף.\r\nניתן לקבל התרעות ביישומון, באתר פיקוד העורף ובאמצעי התקשורת",
+   "engTitle": "Sirens disruptions"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "שיבושים במערך הצופרים - שהו במרחב המוגן",
+   "heb": "קיימים שיבושים במערך הצופרים וייתכן שלא יתקבלו התרעות. \r\nיש לשהות במרחב המוגן עד לחידוש יכולת הפצת התרעה.",
+   "engTitle": "Stay in the protected space"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "הגברת המוכנות",
+   "heb": "נוכח המצב הביטחוני, קיימת היתכנות לאיום על עורף מדינת ישראל.\r\nיש לקדם את ההיערכות והמוכנות האישית והמשפחתית, ולגלות ערנות: \r\nהכירו והכינו את המרחב המוגן המיטבי הנמצא בקרבתכם, התקינו את יישומון פיקוד העורף וודאו שכל בני המשפחה מכירים את ההנחיות.",
+   "engTitle": "Increasing readiness"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "הגברת מוכנות:",
+   "heb": "בעקבות המצב הביטחוני, יש לוודא מהו המרחב המוגן המיטבי בקרבתכם, להתקין את יישומון פיקוד העורף ולהימנע מנסיעות שאינן הכרחיות. \r\nיש להמשיך ולעקוב אחרי ההנחיות ולצרוך מידע בערוצים הרשמיים.",
+   "engTitle": "Increasing readiness"
+  },
+  {
+   "catId": 13,
+   "matrixCatId": 10,
+   "hebTitle": "הצופרים חזרו לפעול",
+   "heb": "מערך הצופרים של פיקוד העורף שב לפעול כסדרו.",
+   "engTitle": "Siren system has returned to operation"
+  },
+  {
+   "catId": 13,
+   "matrixCatId": 10,
+   "hebTitle": "הוסר החשש לחדירת מחבלים",
+   "heb": "נשלל חשש לאירוע חדירת מחבלים, התושבים יכולים לצאת מהבתים ולנוע באזור ללא הגבלה.",
+   "engTitle": "Terrorist infiltration threat has been removed"
+  },
+  {
+   "catId": 13,
+   "matrixCatId": 10,
+   "hebTitle": "אירוע חדירת מחבלים הסתיים",
+   "heb": "הסתיים אירוע חדירת מחבלים באזורך.\r\nניתן לצאת מהבתים ולנוע באזור ללא הגבלה.",
+   "engTitle": "Terrorist infiltration event has ended"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "התקרבו למרחב מוגן",
+   "heb": "בדקות הקרובות צפויות להתקבל התרעות באזורך. עליך לשפר את מיקומך למיגון המיטבי בקרבתך. במקרה של קבלת התרעה, יש להיכנס למרחב המוגן ולשהות בו עד לקבלת הנחיה מפורשת.",
+   "engTitle": "Move closer to the protected space"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "איום מלבנון - התקרבו למרחב מוגן",
+   "heb": "זוהה שיגור לאזורך.\r\nהתרעות עלולות להתקבל בתוך זמן קצר, יש להתקרב כעת למרחב מוגן.\r\nבמקרה של קבלת התרעה, יש להיכנס למרחב המוגן ולהישאר בו עד לקבלת הנחיה מפורשת.",
+   "engTitle": "Threat from Lebanon- Move close to protected space"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "אירוע חדירת מחבלים",
+   "heb": "זוהתה חדירת מחבלים באזורך.\r\nיש להישאר במרחב המוגן ולשבת מתחת לקו חלונות. \r\nהתנועה באזור אסורה. צה\"ל וכוחות הביטחון מטפלים באירוע.",
+   "engTitle": "Terrorist infiltration event"
+  },
+  {
+   "catId": 13,
+   "matrixCatId": 10,
+   "hebTitle": "סיום אירוע סכנת פיצוץ והדף",
+   "heb": "הסתיים אירוע סכנת פיצוץ והדף במפעל באזורך.\r\nניתן לצאת מהמרחב המוגן.",
+   "engTitle": "End of explosion and blast danger event"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "שהו בסמוך למרחב המוגן",
+   "heb": "יש לשהות במקום שניתן להגיע ממנו בתוך דקות ספורות למרחב מוגן מיטבי ולהימנע מנסיעות שאינן הכרחיות.",
+   "engTitle": "Stay near the protected space!"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "אירוע חומרים מסוכנים - המשך הסתגרות במבנה",
+   "heb": "בשל אירוע חומרים מסוכנים באזור, יש להמשיך לשהות במבנה, לוודא שהדלתות והחלונות סגורים ושהמזגן כבוי.\r\nאין לצאת מהמבנה עד לקבלת הנחיה מפורשת.",
+   "engTitle": "Continue staying secluded indoors!"
+  },
+  {
+   "catId": 13,
+   "matrixCatId": 10,
+   "hebTitle": "שלילת סכנת חומרים מסוכנים",
+   "heb": "בהתאם להערכת סיכונים שבוצעה, לא קיימת סכנה באזורכם. \r\nניתן לצאת כעת מהסתגרות במבנה.",
+   "engTitle": "Negation of hazardous materials danger"
+  },
+  {
+   "catId": 13,
+   "matrixCatId": 10,
+   "hebTitle": "סיום אירוע חומרים מסוכנים",
+   "heb": "בהמשך לטיפול באירוע חומרים מסוכנים שהתרחש באזורך - הסכנה חלפה וניתן לצאת כעת מהסתגרות במבנה.",
+   "engTitle": "End of hazardous materials incident"
+  },
+  {
+   "catId": 13,
+   "matrixCatId": 10,
+   "hebTitle": "אירוע כלי טיס עוין הסתיים",
+   "heb": "בהמשך להפעלת התרעה על כניסת כלי טיס עוין לשמי ישראל - האירוע הסתיים.",
+   "engTitle": "Hostile aerial vehicle event has ended"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "סכנת פיצוץ והדף חזק",
+   "heb": "עקב סכנת פיצוץ והדף במפעל באזורך, יש להיכנס מייד למרחב המוגן עד לקבלת הנחיה מפורשת.",
+   "engTitle": "Danger of explosion and strong blast!"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "סכנת פיצוץ והדף חזק - המשך שהייה במרחב המוגן",
+   "heb": "עקב סכנת פיצוץ והדף במפעל באזורך, יש להישאר במרחב המוגן עד לקבלת הנחיה מפורשת.",
+   "engTitle": "Continue staying in the protected space!"
+  },
+  {
+   "catId": 13,
+   "matrixCatId": 10,
+   "hebTitle": "מערך הצופרים חזר לפעול",
+   "heb": "מערך הצופרים של פיקוד העורף שב לפעול כסדרו.",
+   "engTitle": "The siren system is back in operation"
+  },
+  {
+   "catId": 13,
+   "matrixCatId": 10,
+   "hebTitle": "סיום שהייה בסמוך למרחב המוגן",
+   "heb": "אין צורך לשהות יותר בסמוך למרחב מוגן.",
+   "engTitle": "End of stay near the protected space"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "שיבושים בצופרי פיקוד העורף",
+   "heb": "ייתכן שלא ישמעו באזורך אזעקות מצופרי פיקוד העורף.\r\nניתן לקבל התרעות ביישומון פיקוד העורף, באתר פיקוד העורף ובאמצעי התקשורת.",
+   "engTitle": "Disruptions in Home Front Command sirens"
+  },
+  {
+   "catId": 13,
+   "matrixCatId": 10,
+   "hebTitle": "התרעת שווא על רעידת אדמה",
+   "heb": "מבדיקה שבוצעה על ידי המכון הגיאולוגי עולה כי לא התרחשה רעידת אדמה באזורנו.\r\nניתן לחזור לשגרה מלאה.",
+   "engTitle": "False earthquake alert"
+  },
+  {
+   "catId": 13,
+   "matrixCatId": 10,
+   "hebTitle": "הסרת אזהרת צונמי",
+   "heb": "הופעלה התרעה על חשש לצונמי. \r\n הערכת מצב מעלה כי לא צפוי לפגוע צונמי באזורנו.\r\nניתן לחזור לשגרה מלאה.",
+   "engTitle": "Removal of tsunami warning"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "הישמעו להנחיות פיקוד העורף",
+   "heb": "בעקבות המצב הביטחוני, יש לוודא מהו המרחב המוגן המיטבי בקרבתכם, להתקין את יישומון פיקוד העורף ולהימנע מנסיעות שאינן הכרחיות. \r\nיש להמשיך ולעקוב אחרי ההנחיות ולצרוך מידע בערוצים הרשמיים.",
+   "engTitle": "Follow the Home Front Command guidelines"
+  },
+  {
+   "catId": 13,
+   "matrixCatId": 10,
+   "hebTitle": "רעידת אדמה - הנחיות חזרה למבנים",
+   "heb": "בהמשך לרעידת האדמה, הינכם יכולים לחזור לבתים שלא נגרם להם נזק נראה לעין. \r\nבמקרה שתתרחש רעידת אדמה נוספת, יש לפעול על פי ההנחיות ולהגיע למקום בטוח באופן מיידי.",
+   "engTitle": "Earthquake - Guidelines for returning to buildings"
+  },
+  {
+   "catId": 13,
+   "matrixCatId": 10,
+   "hebTitle": "סיום אירוע בקרייה למחקר גרעיני בנגב",
+   "heb": "בהמשך לאירוע שהתרחש בקרייה למחקר גרעיני בנגב,  ניתן לצאת כעת מהסתגרות במבנה.",
+   "engTitle": "End of incident at Negev Nuclear Research Center"
+  },
+  {
+   "catId": 13,
+   "matrixCatId": 10,
+   "hebTitle": "סיום אירוע במרכז למחקר גרעיני בשורק",
+   "heb": "בהמשך לאירוע שהתרחש במרכז למחקר גרעיני בשורק, ניתן לצאת כעת מהסתגרות במבנה.",
+   "engTitle": "End of incident at Soreq Nuclear Research Center"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "אירוע רדיולוגי - הסתגרו במבנה",
+   "heb": "בהמשך לאירוע בשטח הקרייה למחקר גרעיני בנגב , יש להיכנס למבנה -  לסגור דלתות וחלונות ולכבות את המזגן.\r\nאין לצאת מהמבנה עד לקבלת הנחיה מפורשת. התנועה באזור אסורה.\r\nכוחות הביטחון פועלים במקום ומבצעים את כלל הפעולות הנדרשות.",
+   "engTitle": "Radiological incident- Seclude indoors immediately"
+  },
+  {
+   "catId": 14,
+   "matrixCatId": 10,
+   "hebTitle": "אירוע רדיולוגי - הסתגרו במבנה!",
+   "heb": "בהמשך לאירוע בשטח המרכז למחקר גרעיני בשורק, יש להיכנס למבנה -  לסגור דלתות וחלונות ולכבות את המזגן.\r\nאין לצאת מהמבנה עד לקבלת הנחיה מפורשת. התנועה באזור אסורה.\r\nכוחות הביטחון פועלים במקום ומבצעים את כלל הפעולות הנדרשות.",
+   "engTitle": "Radiological incident- Seclude indoors immediately"
+  }
+ ]
+}

@@ -118,55 +118,179 @@ const PORT = process.env.PORT || '3187';
       await fresh.context().close();
     }
 
-    // The classifier fails safe: body text can never turn an attack into an all-clear.
+    // Counting oscillators is not hearing them: check the audio context really
+    // runs when the browser allows sound (the deck's launch flags), and that the
+    // deck SAYS so when the browser blocks it.
+    for (const [policy, wantRunning] of [['no-user-gesture-required', true], ['user-gesture-required', false]]) {
+      const b = await chromium.launch({ args: ['--autoplay-policy=' + policy] });
+      try {
+        const pg = await (await b.newContext()).newPage();
+        await pg.goto('http://127.0.0.1:' + PORT + '/', { waitUntil: 'domcontentloaded' });
+        await pg.waitForTimeout(1500);
+        await pg.evaluate(() => { localStorage.setItem('dl-city', 'בת ים');
+          handleAlertData({ id: 'au1', cat: '1', title: 'ירי רקטות וטילים', data: ['בת ים'], desc: '' }); });
+        await pg.waitForTimeout(600);
+        const au = await pg.evaluate(() => { renderAudioBlocked(); const el = document.getElementById('audioBlocked');
+          return { state: alertAudio && alertAudio.state, badge: !!(el && !el.hidden) }; });
+        console.log('audio with --autoplay-policy=' + policy + ':', JSON.stringify(au));
+        if (wantRunning && (au.state !== 'running' || au.badge)) fail('sound allowed but the siren is not playing: ' + JSON.stringify(au));
+        if (!wantRunning && au.state !== 'running' && !au.badge) fail('sound blocked and the deck does not say so');
+        if (!wantRunning && au.state === 'running') {
+          // headless Chromium plays sound even so: show the deck a blocked context instead
+          const sim = await pg.evaluate(() => { const real = alertAudio;
+            alertAudio = { state: 'suspended', resume: () => Promise.resolve(), currentTime: 0 };
+            renderAudioBlocked(); const el = document.getElementById('audioBlocked'); const shown = !!(el && !el.hidden);
+            alertAudio = real; renderAudioBlocked(); const gone = !el || el.hidden; return { shown, gone }; });
+          console.log('  blocked sound (simulated):', JSON.stringify(sim));
+          if (!sim.shown || !sim.gone) fail('the "sound is blocked" badge does not follow the audio state: ' + JSON.stringify(sim));
+        }
+      } finally { await b.close(); }
+    }
+
+    // Every message in Oref's own table is classified by tests/check_alertkind.js.
+    // Here: real-alert categories and unknown messages stay attacks whatever the body says.
     const kinds = await page.evaluate(() => [
       { cat: '1', title: 'ירי רקטות וטילים', desc: 'היכנסו למרחב המוגן ושהו בו 10 דקות, לאחר מכן ניתן לצאת' },
       { cat: '3', title: 'רעידת אדמה', desc: 'אם לא ניתן לצאת מהמבנה היכנסו לממ"ד' },
       { cat: '7', title: 'אירוע חומרים מסוכנים', desc: 'הישארו בבתים עד להודעה כי ניתן לצאת' },
       { cat: '13', title: 'חדירת מחבלים', desc: 'אינכם יכולים לצאת' },
       { cat: '6', title: 'חדירת כלי טיס עוין', desc: 'בדקות הקרובות ייתכנו התרעות נוספות' },
-      { cat: '10', title: 'עדכון', desc: 'ההתרעה טרם הסתיימה' },
       { cat: '1', title: 'האירוע הסתיים', desc: '' },
-      { cat: '10', title: 'האירוע הסתיים', desc: 'היכנסו למרחב המוגן' },
       { title: 'התרעה כלשהי שאיננו מכירים', desc: '' },
       { cat: '10', title: 'האירוע הסתיים', desc: 'השוהים במרחב המוגן יכולים לצאת' },
       { cat: '10', title: 'בדקות הקרובות צפויות להתקבל התרעות באזורך', desc: '' },
+      { cat: '10', title: 'היכנסו מיד למרחב המוגן', desc: '' },
+      { cat: '10', title: 'פיקוד העורף מעדכן', desc: 'יש להמשיך לשהות במרחב המוגן עד להודעה חדשה' },
     ].map(alertKind));
     console.log('classifier:', kinds.join(','));
-    if (kinds.slice(0, 9).some(k => k !== 'attack')) fail('a message that may be an attack was classified as ' + kinds.slice(0, 9).join(','));
-    if (kinds[9] !== 'ended' || kinds[10] !== 'early') fail('ended/early not recognised: ' + kinds.slice(9).join(','));
+    if (kinds.slice(0, 7).some(k => k !== 'attack')) fail('a message that may be an attack was classified as ' + kinds.slice(0, 7).join(','));
+    if (kinds.slice(7).join() !== 'ended,early,shelter,shelter') fail('cat-10 kinds wrong: ' + kinds.slice(7).join(','));
 
-    // A second siren restarts the protected stay, and "you may leave" never shows while the alert is on.
-    const stay = await page.evaluate(async () => {
+    // Between scenarios: no alert, no stay, nothing remembered.
+    const reset = () => page.evaluate(() => {
+      handleAlertData([]); document.getElementById('takeoverDismiss').click();
+      state.lastAlertId = null; state.chimed.clear(); hideLiveNotice(); window.__sirens = 0; window.__chimes = 0;
       localStorage.setItem('dl-city', 'בת ים');
+      geo.lat = 32.017; geo.lng = 34.745; geo.city = 'בת ים';     // home in the centre: Kiryat Shmona is elsewhere
+    });
+    const view = () => page.evaluate(() => ({
+      takeover: document.getElementById('takeover').classList.contains('show'),
+      ended: document.getElementById('takeover').classList.contains('ended'),
+      mine: document.getElementById('shelterCard').classList.contains('mine'),
+      scope: document.getElementById('scScope').textContent, phase: document.getElementById('scPhase').textContent,
+      count: document.getElementById('scCount').textContent,
+      stay: !!state.stay, further: !!state.stay && state.stay.stayEnd === null, saved: !!localStorage.getItem('dl-stay'),
+      active: !!state.alertActive, sirens: window.__sirens, chimes: window.__chimes,
+      notice: !!(document.getElementById('liveNotice') && !document.getElementById('liveNotice').hidden) }));
+    await page.evaluate(() => { window.__sirens = 0; window.__chimes = 0;
+      window.playSiren = () => { window.__sirens++; }; window.playChime = () => { window.__chimes++; }; });
+    const send = o => page.evaluate(o => handleAlertData(o), o);
+    const ATK = (id, towns) => ({ id, cat: '1', title: 'ירי רקטות וטילים', data: towns, desc: 'היכנסו למרחב המוגן' });
+
+    // A second siren restarts the protected stay; the same siren polled again does not.
+    await reset();
+    const stay = await page.evaluate(() => {
       const calls = []; const orig = window.startShelterCountdown;
-      window.startShelterCountdown = a => { calls.push(1); return orig(a); };
-      handleAlertData({ id: 'r1', cat: '1', title: 'ירי רקטות וטילים', data: ['בת ים'], desc: '' });
-      handleAlertData({ id: 'r1', cat: '1', title: 'ירי רקטות וטילים', data: ['בת ים'], desc: '' });   // same siren, next poll
+      window.startShelterCountdown = (...a) => { calls.push(1); return orig(...a); };
+      const A = id => ({ id, cat: '1', title: 'ירי רקטות וטילים', data: ['בת ים'], desc: '' });
+      handleAlertData(A('r1')); handleAlertData(A('r1'));
       const afterSame = calls.length;
-      handleAlertData({ id: 'r2', cat: '1', title: 'ירי רקטות וטילים', data: ['בת ים'], desc: '' });   // a new siren
+      handleAlertData(A('r2'));
       window.startShelterCountdown = orig;
-      const out = { afterSame, afterNew: calls.length };
-      handleAlertData([]);
-      return out;
+      return { afterSame, afterNew: calls.length };
     });
     console.log('stay restart:', JSON.stringify(stay));
-    if (!(stay.afterNew > stay.afterSame)) fail('a new siren does not restart the protected-stay countdown');
+    if (stay.afterSame !== 1 || stay.afterNew !== 2) fail('a new siren does not restart the protected-stay countdown');
 
-    // "the event has ended" and an early warning are not attacks: no siren, no takeover
-    await page.evaluate(() => { window.__sirens = 0; window.playSiren = () => { window.__sirens++; }; });
-    for (const [name, obj, wantTakeover] of [
-        ['ended', { id: 'e1', cat: '10', title: 'האירוע הסתיים', data: ['בת ים'], desc: 'ניתן לצאת מהמרחב המוגן' }, false],
-        ['early', { id: 'w1', cat: '10', title: 'בדקות הקרובות צפויות להתקבל התרעות באזורך', data: ['בת ים'], desc: '' }, false],
-        ['attack', { id: 'a1', cat: '1', title: 'ירי רקטות וטילים', data: ['בת ים'], desc: 'היכנסו למרחב המוגן' }, true]]) {
-      const r = await page.evaluate(o => { window.__sirens = 0; handleAlertData(o);
-        const n = document.getElementById('liveNotice');
-        return { takeover: document.getElementById('takeover').classList.contains('show'), sirens: window.__sirens,
-                 active: !!state.alertActive, notice: !!(n && !n.hidden) }; }, obj);
-      console.log('alert-kind', name, JSON.stringify(r));
-      if (r.takeover !== wantTakeover || r.active !== wantTakeover || (r.sirens > 0) !== wantTakeover) fail('live message "' + name + '" handled as ' + JSON.stringify(r));
-      if (!wantTakeover && !r.notice) fail('live message "' + name + '" is not shown at all');
-      await page.evaluate(() => { handleAlertData([]); const n = document.getElementById('liveNotice'); if (n) n.hidden = true; });
+    // The four kinds of live message.
+    for (const [name, obj, want] of [
+        ['ended', { id: 'e1', cat: '10', title: 'האירוע הסתיים', data: ['בת ים'], desc: 'ניתן לצאת מהמרחב המוגן' }, { takeover: false, sirens: 0, notice: true }],
+        ['early', { id: 'w1', cat: '10', title: 'בדקות הקרובות צפויות להתקבל התרעות באזורך', data: ['בת ים'], desc: '' }, { takeover: false, sirens: 0, notice: true, chimes: 1 }],
+        ['attack', ATK('a1', ['בת ים']), { takeover: true, sirens: 1, stay: true, further: false }],
+        ['shelter', { id: 'h1', cat: '10', title: 'חדירת מחבלים - אין לצאת מהמרחב המוגן', data: ['בת ים'], desc: '' }, { takeover: true, sirens: 1, stay: true, further: true }]]) {
+      await reset();
+      await page.evaluate(() => { window.__sirens = 0; window.__chimes = 0; });
+      await send(obj);
+      const r = await view();
+      console.log('alert-kind', name, JSON.stringify({ takeover: r.takeover, sirens: r.sirens, chimes: r.chimes, stay: r.stay, further: r.further, notice: r.notice }));
+      for (const [k, v] of Object.entries(want)) if (r[k] !== v) fail('live message "' + name + '": ' + k + '=' + r[k] + ', expected ' + v);
+      if (name === 'shelter' && !r.phase.includes('אין לצאת')) fail('a stay-until-further-notice does not show Oref\'s instruction: ' + r.phase);
+    }
+    // ... and it does not end by the clock: past the 10 minutes it still says stay
+    await page.evaluate(() => { state.stay.p1End = Date.now() - 11 * 60e3; state.stay.at = Date.now() - 12 * 60e3; });
+    await send([]);
+    await page.waitForTimeout(1200);
+    { const r = await view();
+      console.log('further notice after 12 min:', r.count, r.phase);
+      if (!r.stay || !r.takeover || r.ended || /ניתן לצאת/.test(r.phase)) fail('a stay-until-further-notice ended by the clock'); }
+    await send({ id: 'h2', cat: '10', title: 'חדירת מחבלים - החשש הוסר', data: ['בת ים'], desc: '' });
+    { const r = await view();
+      if (r.stay || !r.ended || r.saved) fail('Oref\'s all-clear did not end the stay: ' + JSON.stringify(r)); }
+
+    // S1: an alert somewhere else, in phase 1 and in phase 2 of MY stay, leaves my stay alone
+    await reset();
+    await send(ATK('m1', ['בת ים']));
+    await send(ATK('o1', ['קריית שמונה']));
+    let r1 = await view();
+    await page.evaluate(() => { state.stay.p1End = Date.now() - 1000; });
+    await page.waitForTimeout(1200);
+    await send(ATK('o2', ['קריית שמונה']));
+    let r2 = await view();
+    await send([]);
+    await send({ id: 'oe', cat: '10', title: 'האירוע הסתיים', data: ['קריית שמונה'], desc: '' });
+    let r3 = await view();
+    console.log('other town during my stay:', JSON.stringify([r1.scope, r1.count, r2.scope, r2.count, r3.stay]));
+    if (!r1.stay || !r1.mine || !/ממשיכים/.test(r1.scope) || !/^\d+$/.test(r1.count)) fail('an alert elsewhere disturbed phase 1 of my stay: ' + JSON.stringify(r1));
+    if (!r2.stay || !r2.mine || !/ממשיכים/.test(r2.scope) || !/:/.test(r2.count)) fail('an alert elsewhere disturbed phase 2 of my stay: ' + JSON.stringify(r2));
+    if (!r3.stay || r3.ended) fail('an all-clear for another town ended my stay');
+    if (r2.sirens !== 3) fail('expected a siren per new alert (3), got ' + r2.sirens);
+
+    // an all-clear for MY town that came in one list with a siren elsewhere ends my stay
+    await reset();
+    await send(ATK('m2', ['בת ים']));
+    await send({ id: 'm2+o3', cat: '1', title: 'ירי רקטות וטילים', data: ['קריית שמונה'], desc: '', ended: ['בת ים'] });
+    { const r = await view(); console.log('merged all-clear for my town:', r.stay, r.mine);
+      if (r.stay) fail('an all-clear for my town merged with a siren elsewhere did not end my stay'); }
+
+    // S2: my town added to an alert already on screen (same id, longer list)
+    await reset();
+    await page.evaluate(() => { window.__sirens = 0; });
+    await send(ATK('g1', ['קריית שמונה']));
+    const g1 = await view();
+    await send(ATK('g1', ['קריית שמונה', 'בת ים']));
+    const g2 = await view();
+    await send(ATK('g1', ['קריית שמונה', 'בת ים']));
+    const g3 = await view();
+    console.log('my town added to a running alert:', g1.sirens, g1.stay, '->', g2.sirens, g2.stay, '->', g3.sirens);
+    if (g1.stay || g2.sirens !== 2 || !g2.stay || g3.sirens !== 2) fail('my town added to a running alert: ' + JSON.stringify([g1.sirens, g1.stay, g2.sirens, g2.stay, g3.sirens]));
+
+    // a heads-up for my area chimes once per message, not once per poll
+    await reset();
+    await page.evaluate(() => { window.__chimes = 0; });
+    const EARLY = id => ({ id, cat: '10', title: 'בדקות הקרובות צפויות להתקבל התרעות באזורך', data: ['בת ים'], desc: '' });
+    for (let i = 0; i < 4; i++) await send(EARLY('c1'));
+    await send(EARLY('c2'));
+    await send({ id: 'c3', cat: '10', title: 'בדקות הקרובות צפויות להתקבל התרעות באזורך', data: ['קריית שמונה'], desc: '' });
+    const ch = await view();
+    console.log('chimes for c1 x4, c2, c3 elsewhere:', ch.chimes);
+    if (ch.chimes !== 2) fail('expected 2 chimes, got ' + ch.chimes);
+    await reset();
+
+    // S5: a reload (or crash recovery) in the middle of my stay resumes it
+    {
+      const ctx = await browser.newContext(); const pg = await ctx.newPage();
+      await pg.goto('http://127.0.0.1:' + PORT + '/', { waitUntil: 'domcontentloaded' });
+      await pg.waitForTimeout(1500);
+      await pg.evaluate(() => { localStorage.setItem('dl-city', 'בת ים'); window.playSiren = () => {};
+        handleAlertData({ id: 'x1', cat: '1', title: 'ירי רקטות וטילים', data: ['בת ים'], desc: '' });
+        state.stay.p1End = Date.now() - 2 * 60e3; state.stay.stayEnd = Date.now() + 8 * 60e3; saveStay(); });
+      await pg.reload({ waitUntil: 'domcontentloaded' });
+      await pg.waitForTimeout(2500);
+      const rs = await pg.evaluate(() => ({ running: stayRunning(), takeover: document.getElementById('takeover').classList.contains('show'),
+        count: document.getElementById('scCount').textContent }));
+      console.log('stay after a reload:', JSON.stringify(rs));
+      if (!rs.running || !rs.takeover || !/^[78]:\d\d$/.test(rs.count)) fail('a reload dropped the protected stay: ' + JSON.stringify(rs));
+      await ctx.close();
     }
 
     // an old answer must be labelled as old
@@ -263,6 +387,7 @@ const PORT = process.env.PORT || '3187';
     if (Object.keys(pairs[3].map).length) fail('an ambiguous edit was guessed');
 
     // a message without an id still sounds again after an all-clear or a quiet spell
+    await reset();
     const resound = await page.evaluate(() => {
       let n = 0; const orig = window.playSiren; window.playSiren = () => { n++; };
       const atk = { cat: '1', title: 'ירי רקטות וטילים', data: ['שדרות'], desc: '' };
@@ -279,7 +404,7 @@ const PORT = process.env.PORT || '3187';
     // no self-reload during an alert or a protected stay
     const reloadGuard = await page.evaluate(() => {
       const src = String(maybeFullReload);
-      return /alertActive/.test(src) && /_shelterTimer/.test(src) && !/HARD/.test(src);
+      return /alertActive/.test(src) && /stayRunning\(\)|_shelterTimer/.test(src) && !/HARD/.test(src);
     });
     if (!reloadGuard) fail('the periodic reload is not held back during an alert');
 

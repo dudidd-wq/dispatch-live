@@ -187,7 +187,13 @@ def open_browser_when_ready():
                 # single-app behavior: no background processes lingering after
                 # the window closes (Edge "startup boost" breaks proc.wait())
                 "--disable-background-mode",
-                "--disable-features=StartupBoost,msEdgeStartupBoost,Translate",
+                # A covered or minimised window must keep polling every 5 s and
+                # keep its countdown on time: without these, Chromium throttles
+                # background timers to about once a minute after 5 minutes.
+                "--disable-features=StartupBoost,msEdgeStartupBoost,Translate,IntensiveWakeUpThrottling,CalculateNativeWinOcclusion",
+                "--disable-background-timer-throttling",
+                "--disable-renderer-backgrounding",
+                "--disable-backgrounding-occluded-windows",
                 # no questions: auto-deny permission prompts, allow autoplay
                 "--deny-permission-prompts",
                 "--autoplay-policy=no-user-gesture-required",
@@ -275,13 +281,16 @@ def _note_unverified(host, e):
             pass
 
 
-def open_url(req, timeout):
+def open_url(req, timeout, strict=False):
     """urlopen with a verified certificate, or - when only the certificate
-    check fails - once more without it, recorded in _tls_unverified."""
+    check fails and strict is off - once more without it, recorded in
+    _tls_unverified. strict is on for Oref: an alert feed whose certificate
+    cannot be verified may be someone else answering "no alert", so it is a
+    failure (shown in red), never a quiet fallback."""
     try:
         return urlopen(req, timeout=timeout, context=_SSL_CTX)
     except Exception as e:
-        if not _is_cert_error(e):
+        if strict or not _is_cert_error(e):
             raise
         url = req.full_url if hasattr(req, "full_url") else str(req)
         _note_unverified(urlparse(url).hostname or "?", e)
@@ -445,7 +454,7 @@ def fetch_oref(url):
     result = (False, 502, '{"error":"oref fetch failed"}')
     req = Request(url, headers=OREF_HEADERS)
     try:
-        with open_url(req, 12) as resp:
+        with open_url(req, 12, strict=True) as resp:
             raw = resp.read()
             raw = _decompress(raw, (resp.headers.get("Content-Encoding") or "").lower())
             text = _decode_feed(raw)
@@ -453,7 +462,11 @@ def fetch_oref(url):
                 text = "[]"   # quiet = no active alert
             result = (True, resp.status, text)
     except Exception as e:
-        result = (False, 502, '{"error":"oref fetch failed: %s"}' % str(e).replace('"', "'"))
+        why = str(e).replace('"', "'")
+        if _is_cert_error(e):
+            why = ("the certificate of oref.org.il could not be verified on this PC - "
+                   "open https://www.oref.org.il once in Edge, then restart the deck (%s)" % why[:80])
+        result = (False, 502, '{"error":"oref fetch failed: %s"}' % why)
     finally:
         now = time.time()
         if len(_oref_shared) > 40:                  # one entry per URL ever fetched otherwise
@@ -1981,6 +1994,7 @@ def _pinned_connection(scheme, host, port, ip, timeout, ctx=None):
 
 
 FETCH_DEADLINE = 25              # seconds for the whole fetch, redirects and body included
+_FETCH_HEADERS = dict(BROWSER_HEADERS, **{"Accept-Encoding": "gzip, deflate"})
 FETCH_MAX_WIRE = 6 * 1024 * 1024     # bytes as sent
 FETCH_MAX_BODY = 10 * 1024 * 1024    # bytes after decompression
 
@@ -1994,12 +2008,56 @@ class _FetchLimit(Exception):
     pass
 
 
+class _Deadline:
+    """Closes every socket of a fetch when its time is up. Socket timeouts
+    restart with every byte, so a server that drips its HEADERS one byte at a
+    time used to hold a thread for as long as it liked."""
+
+    def __init__(self, seconds):
+        self.socks, self.fired = [], False
+        self.timer = threading.Timer(max(0.1, seconds), self.fire)
+        self.timer.daemon = True
+        self.timer.start()
+
+    def add(self, sock):
+        if sock is not None:
+            self.socks.append(sock)
+            if self.fired:
+                self._close(sock)
+
+    @staticmethod
+    def _close(sock):
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except Exception:
+            pass
+        try:
+            sock.close()
+        except Exception:
+            pass
+
+    def fire(self):
+        self.fired = True
+        for s in list(self.socks):
+            self._close(s)
+
+    def cancel(self):
+        self.timer.cancel()
+
+
 def _read_limited(resp, deadline, set_timeout=None):
     """Read a response body within the deadline and the size limits, and
     decompress it as it streams so a small gzip cannot expand without bound."""
     enc = (resp.getheader("Content-Encoding") or "").lower().strip()
-    # 32 + MAX_WBITS: accept a gzip or a zlib header, whichever the server sent
+    if enc not in ("", "identity", "gzip", "x-gzip", "deflate"):
+        # br, zstd...: we asked for gzip/deflate only; binary we cannot read
+        # must not be passed off (or remembered) as the feed
+        raise _FetchLimit("unsupported content encoding %r" % enc[:20])
+    # 32 + MAX_WBITS: accept a gzip or a zlib header, whichever the server sent.
+    # Some servers label raw deflate, or even a plain body, as compressed: the
+    # first chunk decides, as the pre-v80 decoder did.
     dec = zlib.decompressobj(32 + zlib.MAX_WBITS) if enc in ("gzip", "x-gzip", "deflate") else None
+    first = dec is not None
     wire, out, size = 0, [], 0
     while True:
         left = deadline - time.monotonic()
@@ -2007,8 +2065,17 @@ def _read_limited(resp, deadline, set_timeout=None):
             raise _FetchLimit("took longer than %d s" % FETCH_DEADLINE)
         if set_timeout:
             set_timeout(max(0.5, min(left, TIMEOUT)))
-        chunk = resp.read1(65536)
+        try:
+            chunk = resp.read1(65536)
+        except (OSError, ValueError, AttributeError):
+            if time.monotonic() >= deadline - 0.2:
+                raise _FetchLimit("took longer than %d s" % FETCH_DEADLINE)
+            raise
         if not chunk:
+            # the deadline guard closes the socket, which reads as end of
+            # file: a body cut off that way is not a complete answer
+            if time.monotonic() >= deadline - 0.2:
+                raise _FetchLimit("took longer than %d s" % FETCH_DEADLINE)
             break
         wire += len(chunk)
         if wire > FETCH_MAX_WIRE:
@@ -2017,15 +2084,26 @@ def _read_limited(resp, deadline, set_timeout=None):
             try:
                 chunk = dec.decompress(chunk, FETCH_MAX_BODY - size + 1)
             except zlib.error:
-                raise _FetchLimit("corrupt %s body" % enc)
-            if dec.unconsumed_tail:
+                if not first:
+                    raise _FetchLimit("corrupt %s body" % enc)
+                raw_dec = zlib.decompressobj(-zlib.MAX_WBITS)
+                try:
+                    chunk = raw_dec.decompress(chunk, FETCH_MAX_BODY - size + 1)
+                    dec = raw_dec                               # raw deflate
+                except zlib.error:
+                    dec = None                                  # labelled compressed, sent plain
+            first = False
+            if dec is not None and dec.unconsumed_tail:
                 raise _FetchLimit("response expands too much")
         size += len(chunk)
         if size > FETCH_MAX_BODY:
             raise _FetchLimit("response expands too much")
         out.append(chunk)
     if dec is not None:
-        tail = dec.flush()
+        try:
+            tail = dec.flush()
+        except zlib.error:
+            tail = b""
         if size + len(tail) > FETCH_MAX_BODY:
             raise _FetchLimit("response expands too much")
         out.append(tail)
@@ -2068,9 +2146,29 @@ def _fetch_via_proxy(target, max_hops, max_bytes):
         return False, 400, "Only public web addresses can be fetched"
     deadline = time.monotonic() + FETCH_DEADLINE
 
+    import http.client
+    guard = _Deadline(deadline - time.monotonic())
+
+    class GConn(http.client.HTTPConnection):
+        def connect(self):
+            http.client.HTTPConnection.connect(self)
+            guard.add(self.sock)
+
+    class GSConn(http.client.HTTPSConnection):
+        def connect(self):
+            http.client.HTTPSConnection.connect(self)
+            guard.add(self.sock)
+
+    class GH(urllib.request.HTTPHandler):
+        def http_open(self, req):
+            return self.do_open(GConn, req)
+
     def attempt(ctx):
-        opener = urllib.request.build_opener(Hops, urllib.request.HTTPSHandler(context=ctx))
-        with opener.open(Request(target, headers=BROWSER_HEADERS), timeout=TIMEOUT) as resp:
+        class GHS(urllib.request.HTTPSHandler):
+            def https_open(self, req):
+                return self.do_open(GSConn, req, context=ctx)
+        opener = urllib.request.build_opener(Hops, GH, GHS)
+        with opener.open(Request(target, headers=_FETCH_HEADERS), timeout=TIMEOUT) as resp:
             def set_timeout(t):
                 try:
                     resp.fp.raw._sock.settimeout(t)
@@ -2082,14 +2180,18 @@ def _fetch_via_proxy(target, max_hops, max_bytes):
         try:
             return attempt(_SSL_CTX)
         except Exception as e:
-            if not _is_cert_error(e):
+            if guard.fired or not _is_cert_error(e):
                 raise
             _note_unverified(urlparse(target).hostname or "?", e)
             return attempt(_SSL_LOOSE)
     except _NotPublic:
         return False, 400, "Only public web addresses can be fetched"
     except Exception as e:
+        if guard.fired:
+            return False, 502, "Upstream fetch failed: took longer than %d s" % FETCH_DEADLINE
         return False, 502, "Upstream fetch failed: %s" % e
+    finally:
+        guard.cancel()
 
 
 def fetch_public(target, max_hops=5, max_bytes=6 * 1024 * 1024):
@@ -2101,6 +2203,7 @@ def fetch_public(target, max_hops=5, max_bytes=6 * 1024 * 1024):
     from urllib.parse import urljoin, urlsplit
     url = target
     deadline = time.monotonic() + FETCH_DEADLINE
+    guard = None
     try:
         px = urllib.request.getproxies()
         if px.get("http") or px.get("https"):
@@ -2109,6 +2212,7 @@ def fetch_public(target, max_hops=5, max_bytes=6 * 1024 * 1024):
             # could switch scheme, so the whole fetch goes the proxy way, with
             # every hop's address still checked.
             return _fetch_via_proxy(target, max_hops, max_bytes)
+        guard = _Deadline(FETCH_DEADLINE)
         for _hop in range(max_hops + 1):
             if time.monotonic() > deadline:
                 return False, 502, "Upstream fetch failed: took longer than %d s" % FETCH_DEADLINE
@@ -2133,6 +2237,7 @@ def fetch_public(target, max_hops=5, max_bytes=6 * 1024 * 1024):
                                            max(1.0, min(TIMEOUT, deadline - time.monotonic())), ctx)
                     try:
                         c.connect()
+                        guard.add(c.sock)
                         conn = c
                         if ctx is _SSL_LOOSE:
                             _note_unverified(u.hostname, last_err)
@@ -2149,7 +2254,7 @@ def fetch_public(target, max_hops=5, max_bytes=6 * 1024 * 1024):
             try:
                 sp = urlsplit(url)                 # keeps ";params" in the path
                 path = (sp.path or "/") + (("?" + sp.query) if sp.query else "")
-                conn.request("GET", path, headers=BROWSER_HEADERS)
+                conn.request("GET", path, headers=_FETCH_HEADERS)
                 resp = conn.getresponse()
                 if resp.status in (301, 302, 303, 307, 308):
                     loc = resp.getheader("Location")
@@ -2165,7 +2270,36 @@ def fetch_public(target, max_hops=5, max_bytes=6 * 1024 * 1024):
                 conn.close()
         return False, 502, "Upstream fetch failed: too many redirects"
     except Exception as e:
+        if guard is not None and guard.fired:
+            return False, 502, "Upstream fetch failed: took longer than %d s" % FETCH_DEADLINE
         return False, 502, "Upstream fetch failed: %s" % e
+    finally:
+        if guard is not None:
+            guard.cancel()
+
+
+# The deck's alertKind(), in Python, for merging a list of live messages.
+# Both are checked against Oref's own message table (tests/fixtures).
+OREF_SHELTER_RE = re.compile("היכנסו מי?יד|להיכנס מי?יד|היכנסו למרחב|היכנסו למבנה|הסתגרו|הסתגרות|אין לצאת|להמשיך לשהות במרחב המוגן|המשך שהייה במרחב המוגן|להישאר במרחב המוגן|הישארו במרחב המוגן|יש לשהות במרחב המוגן|יש לשהות במרחב מוגן|שהו במרחב המוגן|המשך שהייה במבנה|לשהות במבנה|הישארו בשטח פתוח|לשהות בשטח פתוח")
+OREF_ENDED_RE = re.compile("הסתיים|ניתן לצאת|יכולים לצאת|החשש הוסר|הוסר החשש|נשלל|חלפה|ניתן לחזור|לחזור לשגרה|סיום|שלילת|הסרת|התרעת שווא|חזרו לפעול|חזר לפעול|אין הנחיות לציבור|חזרה למבנים|יציאה ממרחב מוגן")
+
+
+def _oref_kind(x):
+    title = " ".join(str(x.get("title") or "").split())
+    desc = " ".join(str(x.get("desc") or "").split())
+    try:
+        cat = int(str(x.get("cat")).strip())
+    except (TypeError, ValueError):
+        cat = None
+    if cat is not None and cat != 10:
+        return "attack"
+    if OREF_SHELTER_RE.search(title):
+        return "shelter"
+    if OREF_ENDED_RE.search(title):
+        return "ended"
+    if OREF_SHELTER_RE.search(desc):
+        return "shelter"
+    return "early" if cat == 10 else "attack"
 
 
 def _alert_payload(text):
@@ -2185,21 +2319,35 @@ def _alert_payload(text):
             return "[]"
         if not all(isinstance(x, dict) and isinstance(x.get("data"), list) for x in d):
             return None
-        # several messages at once: an attack outranks "event ended" / early
-        # warning, and only messages of the chosen kind are merged - an
-        # all-clear for one town must not relabel another town's siren
-        def is_news(x):
-            return re.match(r"\s*(האירוע הסתיים|ניתן לצאת|סיום האירוע|בדקות הקרובות|התרעה מקדימה|הנחיה מקדימה)",
-                            str(x.get("title") or "")) is not None
-        attacks = [x for x in d if not is_news(x)]
-        chosen = attacks or d
+        # Several messages at once. The ones that sound the siren (attack, and
+        # cat-10 "go in / stay in") are merged; an all-clear or heads-up for
+        # one town must never relabel another town's siren. The classifier is
+        # the deck's own (alertKind), checked against Oref's message table.
+        kinds = [_oref_kind(x) for x in d]
+        siren = [x for x, k in zip(d, kinds) if k in ("attack", "shelter")]
+        chosen = siren or [x for x, k in zip(d, kinds) if k == "early"] or d
         cities = []
         for x in chosen:
             cities += [c for c in x["data"] if isinstance(c, str) and c not in cities]
         if not cities:
             return None
-        merged = dict(chosen[0])
+        # the base message sets title and category: "stay until further
+        # notice" is the stricter instruction, so it wins over a timed stay
+        base = next((x for x, k in zip(d, kinds) if k == "shelter"), None) if siren else None
+        merged = dict(base or chosen[0])
         merged["data"] = cities
+        # the deck decides "new alert" by id: a message added to the list must
+        # change it, or a siren for a newly included town would never sound
+        merged["id"] = "+".join(sorted(str(x.get("id") or "") for x in chosen))
+        if any(k != "ended" for x, k in zip(d, kinds) if x in chosen):
+            # an all-clear that came in the same list still ends the stay of
+            # the towns it names (they are not in the merged list)
+            ended = []
+            for x, k in zip(d, kinds):
+                if k == "ended":
+                    ended += [c for c in x["data"] if isinstance(c, str) and c not in cities and c not in ended]
+            if ended:
+                merged["ended"] = ended
         return json.dumps(merged, ensure_ascii=False)
     if isinstance(d, dict):
         data, cities = d.get("data"), d.get("cities")

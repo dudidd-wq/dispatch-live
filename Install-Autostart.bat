@@ -10,6 +10,7 @@ cd /d "%~dp0"
 REM The path is put in a variable first and used through delayed expansion:
 REM a folder name with "&" or "(" would otherwise break the reg command.
 set "TARGET=%~dp0Start-Dispatch-BACKGROUND.bat"
+set "LOGDIR=%~dp0logs"
 setlocal enabledelayedexpansion
 if not exist "!TARGET!" goto missing
 
@@ -19,7 +20,7 @@ if errorlevel 1 goto failed
 echo.
 echo  [OK] Dispatch LIVE will start by itself at every sign-in.
 echo       It runs in the background - there is no console window.
-echo       Logs:   %~dp0logs
+echo       Logs:   !LOGDIR!
 echo       Stop:   Stop-Dispatch.bat
 echo       Remove: Uninstall-Autostart.bat
 echo.

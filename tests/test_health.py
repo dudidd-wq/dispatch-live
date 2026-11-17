@@ -393,6 +393,25 @@ class TestFetchLimits(_InternetStandIn):
                             self.wfile.write(b"x"); self.wfile.flush(); _t.sleep(0.5)
                         except Exception:
                             return
+                elif self.path == "/slowheaders":
+                    # the status line, then one header byte every half second
+                    self.wfile.write(b"HTTP/1.1 200 OK\r\n"); self.wfile.flush()
+                    for _ in range(40):
+                        try:
+                            self.wfile.write(b"X"); self.wfile.flush(); _t.sleep(0.5)
+                        except Exception:
+                            return
+                elif self.path == "/rawdeflate":
+                    import zlib
+                    c = zlib.compressobj(wbits=-15); body = c.compress("<rss>raw</rss>".encode()) + c.flush()
+                    self._send(body, [("Content-Encoding", "deflate")])
+                elif self.path == "/zlibdeflate":
+                    import zlib
+                    self._send(zlib.compress(b"<rss>zlib</rss>"), [("Content-Encoding", "deflate")])
+                elif self.path == "/notgz":
+                    self._send(b"<rss>labelled gzip, sent plain</rss>", [("Content-Encoding", "gzip")])
+                elif self.path == "/br":
+                    self._send(b"\x1b\x03\x00\xf8\xa5\x40\xc2\xe3", [("Content-Encoding", "br")])
                 elif self.path == "/feed;jsessionid=abc?x=1":
                     self._send(b"<rss>params kept</rss>")
                 elif self.path == "/challenge":
@@ -425,6 +444,30 @@ class TestFetchLimits(_InternetStandIn):
             self.assertFalse(ok); self.assertIn("longer", txt)
         finally:
             server.FETCH_DEADLINE = old
+
+    def test_a_server_trickling_its_headers_cannot_hold_a_thread(self):
+        import time
+        old = server.FETCH_DEADLINE
+        try:
+            server.FETCH_DEADLINE = 3
+            t0 = time.time()
+            ok, st, txt = server.fetch_public(self._url("/slowheaders"))
+            self.assertLess(time.time() - t0, 6)
+            self.assertFalse(ok)
+        finally:
+            server.FETCH_DEADLINE = old
+
+    def test_every_deflate_flavour_and_a_mislabelled_body(self):
+        self.assertEqual(server.fetch_public(self._url("/rawdeflate"))[2], "<rss>raw</rss>")
+        self.assertEqual(server.fetch_public(self._url("/zlibdeflate"))[2], "<rss>zlib</rss>")
+        self.assertEqual(server.fetch_public(self._url("/notgz"))[2], "<rss>labelled gzip, sent plain</rss>")
+
+    def test_an_encoding_we_cannot_read_is_a_clear_failure(self):
+        ok, st, txt = server.fetch_public(self._url("/br"))
+        self.assertFalse(ok); self.assertIn("br", txt)
+
+    def test_we_only_ask_for_encodings_we_can_read(self):
+        self.assertEqual(server._FETCH_HEADERS["Accept-Encoding"], "gzip, deflate")
 
     def test_path_parameters_are_sent_as_written(self):
         self.assertEqual(server.fetch_public(self._url("/feed;jsessionid=abc?x=1"))[2], "<rss>params kept</rss>")

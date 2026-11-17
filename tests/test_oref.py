@@ -216,6 +216,15 @@ class TestAlertShape(unittest.TestCase):
         self.assertEqual((both["title"], both["data"]), ("ירי רקטות וטילים", ["בת ים"]))
         self.assertEqual(json.loads(server._alert_payload('{"title":"t","data":[],"cities":["x"]}'))["data"], ["x"])
 
+    def test_a_merged_list_keeps_every_id(self):
+        # the deck sounds again for a NEW id: a merged answer must carry all of them,
+        # so a second alert joining the list is not mistaken for the first one
+        a = json.loads(server._alert_payload('[{"id":"301","cat":"1","title":"t","data":["a"]},{"id":"302","cat":"1","title":"t","data":["b"]}]'))
+        b = json.loads(server._alert_payload('[{"id":"302","cat":"1","title":"t","data":["b"]},{"id":"301","cat":"1","title":"t","data":["a"]}]'))
+        self.assertEqual(a["id"], "301+302"); self.assertEqual(b["id"], a["id"])      # order on the wire does not matter
+        c = json.loads(server._alert_payload('[{"id":"301","cat":"1","title":"t","data":["a"]}]'))
+        self.assertNotEqual(c["id"], a["id"])
+
     def test_the_feed_in_every_encoding_it_has_used(self):
         # constructed from the feed's documented format, not a recording
         alert = '{"id":"134000000000000000","cat":"1","title":"ירי רקטות וטילים","data":["שדרות, איבים, ניר עם"],"desc":"היכנסו למרחב המוגן"}'
@@ -230,3 +239,62 @@ class TestAlertShape(unittest.TestCase):
         for bad in ("<!DOCTYPE html><title>Page moved</title>", "null", '{"message":"moved"}', '"ok"', "5",
                     "", '{"data":"not a list"}', "[1,2]", '{"error":"x"}'):
             self.assertFalse(server._valid_alert_payload(bad), bad)
+
+
+class TestOrefCertificate(unittest.TestCase):
+    """Alerts are never read over an unverified connection."""
+
+    def test_no_unverified_retry_for_oref(self):
+        import ssl, urllib.error
+        calls = []
+        real = server.urlopen
+        def fake(req, timeout=None, context=None):
+            calls.append(context)
+            raise urllib.error.URLError(ssl.SSLCertVerificationError("certificate verify failed"))
+        server.urlopen = fake
+        server._tls_unverified.clear()
+        try:
+            ok, st, txt = server.fetch_oref(server.OREF_ALERTS + "?t=certtest")
+        finally:
+            server.urlopen = real
+        self.assertFalse(ok)
+        self.assertEqual(calls, [server._SSL_CTX])          # strict: tried once, verified only
+        self.assertNotIn("www.oref.org.il", server._tls_unverified)
+        self.assertIn("Edge", txt)                          # and says what to do about it
+
+
+class TestListMerge(unittest.TestCase):
+    """Several live messages at once: the siren must survive the merge."""
+
+    def _merge(self, *msgs):
+        return json.loads(server._alert_payload(json.dumps(list(msgs), ensure_ascii=False)))
+
+    def test_the_server_classifies_every_oref_message_like_the_deck(self):
+        here = os.path.dirname(__file__)
+        table = json.load(open(os.path.join(here, "fixtures", "oref_titles.json"), encoding="utf-8"))["entries"]
+        want = {" ".join(k.split()): v for k, v in
+                json.load(open(os.path.join(here, "fixtures", "oref_expected.json"), encoding="utf-8")).items()
+                if not k.startswith("_")}
+        for e in table:
+            exp = want[" ".join(e["hebTitle"].split())] if e["matrixCatId"] == 10 else "attack"
+            got = server._oref_kind({"cat": str(e["matrixCatId"]), "title": e["hebTitle"], "desc": e["heb"]})
+            self.assertEqual(got, exp, e["hebTitle"])
+
+    def test_an_all_clear_listed_first_does_not_swallow_a_siren(self):
+        m = self._merge({"id": "1", "cat": "10", "title": "ירי רקטות וטילים - האירוע הסתיים", "data": ["חיפה"]},
+                        {"id": "2", "cat": "1", "title": "ירי רקטות וטילים", "data": ["בת ים"]})
+        self.assertEqual((m["cat"], m["title"], m["data"]), ("1", "ירי רקטות וטילים", ["בת ים"]))
+        self.assertEqual(m["ended"], ["חיפה"])              # and Haifa's stay can still end
+
+    def test_take_cover_and_a_siren_merge_and_the_stricter_instruction_leads(self):
+        m = self._merge({"id": "1", "cat": "1", "title": "ירי רקטות וטילים", "data": ["שדרות"]},
+                        {"id": "2", "cat": "10", "title": "היכנסו מיד למרחב המוגן", "data": ["אשקלון"]})
+        self.assertEqual(m["data"], ["שדרות", "אשקלון"])
+        self.assertEqual(m["title"], "היכנסו מיד למרחב המוגן")
+        self.assertNotIn("ended", m)
+
+    def test_heads_up_and_all_clear_alone(self):
+        m = self._merge({"id": "1", "cat": "10", "title": "האירוע הסתיים", "data": ["חיפה"]},
+                        {"id": "2", "cat": "10", "title": "בדקות הקרובות צפויות להתקבל התרעות באזורך", "data": ["עכו"]})
+        self.assertEqual(m["data"], ["עכו"])                # the heads-up is the more urgent of the two
+        self.assertEqual(m["ended"], ["חיפה"])

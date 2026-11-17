@@ -1350,6 +1350,7 @@
   /* ============================================================
      FULL-SCREEN ALERT TAKEOVER
      ============================================================ */
+  .takeover.ended { background: radial-gradient(circle at 50% 35%, rgba(34,197,94,0.30), transparent 60%), #03140a !important; }
   .takeover {
     position:fixed; inset:0; z-index:1000;
     display:none; flex-direction:column;
@@ -1463,7 +1464,7 @@
     </div>
     <div class="brand-text">
       <div class="brand-title"><span class="live-dot" id="sysDot"></span>חדר <span style="color:var(--live)">מצב</span></div>
-      <div class="brand-sub" id="brandSub">DISPATCH LIVE · IL <b class="build-tag" title="גרסת הקבצים שרצה כרגע — אם אחרי עדכון המספר לא השתנה, מוגשת גרסה ישנה">v17.11-80</b></div>
+      <div class="brand-sub" id="brandSub">DISPATCH LIVE · IL <b class="build-tag" title="גרסת הקבצים שרצה כרגע — אם אחרי עדכון המספר לא השתנה, מוגשת גרסה ישנה">v17.11-81</b></div>
     </div>
   </div>
 
@@ -1960,6 +1961,10 @@ const state = {
   orefFails: 0, orefDown: false,  // connectivity to the Oref alert feed
   _newsImp: null,        // {imp,total} share of security headlines in the digest
   alertSound: localStorage.getItem('dl-sound') !== 'off',
+  stay: null,            // the running protected stay (see startShelterCountdown)
+  stayDoneUntil: 0,
+  mineInAlert: false,
+  chimed: new Set(),
   lastAlertId: null,
   hls: {},
 };
@@ -3206,45 +3211,66 @@ async function pollAlerts() {
   }
 }
 
-// What a live message is. The feed also announces that an event is over and,
-// ahead of time, that alerts are expected - sounding the siren and ordering
-// people into the shelter for "the event has ended" is the worst possible
-// reading of it.
-// FAIL SAFE: a message is an attack unless everything says otherwise. Only the
-// TITLE may declare "ended" or "early warning", only at its start, and only
-// for the feed's news category (cat 10) or no category. Instructions often
-// contain phrases like "afterwards you may leave" - the body text must never
-// be able to turn an attack into an all-clear.
+// ---- what a live message is ----
+// Oref's live feed carries the real alerts (cat 1 missiles, 6 hostile aircraft,
+// 13 infiltration, 3 earthquake, 7 hazmat, 101+ drills...) and, under cat 10,
+// its "update"/"flash" messages. cat 10 is NOT always harmless: Oref's own
+// message table (www.oref.org.il/alerts/alertsTranslation.json, recorded in
+// tests/fixtures/oref_titles.json) has cat-10 messages that say "the event has
+// ended", others that warn of alerts in the next minutes, and others that say
+// "enter the protected space immediately and stay until further notice".
+// Four kinds:
+//   attack  - a real alert: siren, takeover, entry time + 10-minute stay
+//   shelter - cat 10 "go in / stay in": siren, takeover, stay UNTIL FURTHER NOTICE
+//   ended   - cat 10 "you may leave": ends the stay for the areas it names
+//   early   - cat 10 heads-up ("alerts expected", "stay near a shelter"): notice
+// Every cat-10 title in Oref's table is classified by the tests. Anything with a
+// real-alert category, or with no category and no recognised all-clear, is an
+// attack: an unknown message must never be read as "all clear".
+const OREF_SHELTER = /היכנסו מי?יד|להיכנס מי?יד|היכנסו למרחב|היכנסו למבנה|הסתגרו|הסתגרות|אין לצאת|להמשיך לשהות במרחב המוגן|המשך שהייה במרחב המוגן|להישאר במרחב המוגן|הישארו במרחב המוגן|יש לשהות במרחב המוגן|יש לשהות במרחב מוגן|שהו במרחב המוגן|המשך שהייה במבנה|לשהות במבנה|הישארו בשטח פתוח|לשהות בשטח פתוח/;
+const OREF_ENDED = /הסתיים|ניתן לצאת|יכולים לצאת|החשש הוסר|הוסר החשש|נשלל|חלפה|ניתן לחזור|לחזור לשגרה|סיום|שלילת|הסרת|התרעת שווא|חזרו לפעול|חזר לפעול|אין הנחיות לציבור|חזרה למבנים|יציאה ממרחב מוגן/;
 function alertKind(data) {
-  const title = String(data.title || '').trim(), desc = String(data.desc || '');
+  const title = String(data.title || '').replace(/\s+/g, ' ').trim();
+  const desc = String(data.desc || '').replace(/\s+/g, ' ');
   const cat = parseInt(data.cat, 10);
-  const ended = /^(האירוע הסתיים|ניתן לצאת מהמרחב המוגן|סיום האירוע)/.test(title);
-  const early = /^(בדקות הקרובות|התרעה מקדימה|הנחיה מקדימה)/.test(title);
-  if (!ended && !early) return 'attack';
   if (!isNaN(cat) && cat !== 10) return 'attack';
-  if (/היכנסו|הכנסו|תפסו מחסה/.test(desc)) return 'attack';
-  return ended ? 'ended' : 'early';
+  // the headline decides; the body only adds an instruction the headline lacks
+  // (the body of an all-clear often says what to do at the NEXT alert)
+  if (OREF_SHELTER.test(title)) return 'shelter';
+  if (OREF_ENDED.test(title)) return 'ended';
+  if (OREF_SHELTER.test(desc)) return 'shelter';
+  if (cat === 10) return 'early';
+  return 'attack';
 }
+
 let _noticeTimer = null;
-function showLiveNotice(kind, title, cities) {
+function hideLiveNotice() { const el = $('liveNotice'); if (el) el.hidden = true; clearTimeout(_noticeTimer); }
+function showLiveNotice(kind, title, cities, id) {
   let el = $('liveNotice');
   if (!el) {
     el = document.createElement('div'); el.id = 'liveNotice';
-    el.style.cssText = 'position:fixed;top:64px;left:50%;transform:translateX(-50%);z-index:1100;max-width:80vw;padding:12px 22px;' +
-      'border-radius:12px;font:800 19px Heebo,Assistant,sans-serif;color:#fff;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,.6)';
     document.body.appendChild(el);
   }
-  const mine = myCityName();
-  const hitsMe = mine && cities.some(c => c.includes(mine) || mine.includes(c));
+  const me = alertTouchesMe(cities);
+  const hitsMe = !!(me.city || me.region);
+  // A notice about somewhere else must not cover a running alert or my stay.
+  const quiet = !hitsMe && (state.alertActive || stayRunning());
+  el.style.cssText = quiet
+    ? 'position:fixed;bottom:12px;left:50%;transform:translateX(-50%);z-index:900;max-width:60vw;padding:6px 14px;border-radius:10px;' +
+      'font:700 13px Assistant,sans-serif;color:#fff;text-align:center;box-shadow:0 6px 20px rgba(0,0,0,.5)'
+    : 'position:fixed;top:64px;left:50%;transform:translateX(-50%);z-index:1100;max-width:80vw;padding:12px 22px;' +
+      'border-radius:12px;font:800 19px Heebo,Assistant,sans-serif;color:#fff;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,.6)';
   el.style.background = kind === 'ended' ? 'rgba(21,128,61,0.96)' : 'rgba(180,83,9,0.97)';
   el.style.border = '2px solid ' + (kind === 'ended' ? '#4ade80' : '#fbbf24');
-  el.innerHTML = `${kind === 'ended' ? '✓' : '⚠'} ${esc(title)}${hitsMe ? ' · ' + esc(mine) : ''}
+  el.innerHTML = `${kind === 'ended' ? '✓' : '⚠'} ${esc(title)}${hitsMe ? ' <span style="font-size:.75em;opacity:.9">· כולל את האזור שלך</span>' : ''}
     <div style="font:600 13px Assistant,sans-serif;opacity:.92;margin-top:4px">${esc(cities.slice(0, 8).join(' · '))}${cities.length > 8 ? ' ועוד ' + (cities.length - 8) : ''}</div>`;
   el.hidden = false;
-  if (kind === 'early' && hitsMe) playChime();
+  // a heads-up for my own area chimes - once per message, not on every poll
+  if (kind === 'early' && hitsMe && !state.chimed.has(id)) { state.chimed.add(id); playChime(); }
   clearTimeout(_noticeTimer);
   _noticeTimer = setTimeout(() => { el.hidden = true; }, kind === 'ended' ? 90e3 : 240e3);
 }
+
 function handleAlertData(data) {
   // Active alert shape: { id, cat, title, data:[cities], desc } OR empty []
   const hasAlert = data && !Array.isArray(data) && (data.data || data.cities);
@@ -3254,32 +3280,54 @@ function handleAlertData(data) {
   // Oref sends an id; without one, the localities stand in for it (marked
   // 'syn:' so a quiet feed can clear it and the same towns alert again)
   const id = hasAlert ? (data.id ? String(data.id) : 'syn:' + cities.join(',')) : null;
-
   const kind = hasAlert ? alertKind(data) : null;
-  if (hasAlert && cities.length && kind !== 'attack') {
-    // not an attack: no siren, no takeover, no shelter countdown. Remember it
-    // under a different key, so an attack that follows sounds again.
+
+  if (hasAlert && cities.length && (kind === 'ended' || kind === 'early')) {
+    // no siren, no takeover. Remembered under its own key, so an attack that
+    // follows sounds again.
     state.lastAlertId = 'notice:' + id;
     state.alertActive = false;
-    // Oref announcing the end of the event for our area ends the protected stay
+    state.mineInAlert = false;
     if (kind === 'ended') {
       const me = alertTouchesMe(cities);
-      if (me.city || me.region) endShelterStay();
+      if ((me.city || me.region) && stayRunning()) endShelterStay();
+    }
+    if (Array.isArray(data.ended) && stayRunning()) {     // an all-clear that came in the same list
+      const e = alertTouchesMe(data.ended);
+      if (e.city || e.region) endShelterStay();
     }
     hideTakeover();
     setAlertChrome(false, 0);
-    showLiveNotice(kind, title, cities);
+    showLiveNotice(kind, title, cities, id);
   } else if (hasAlert && cities.length) {
+    const me = alertTouchesMe(cities);
+    const mineNow = !!(me.city || me.region);
     const fresh = id !== state.lastAlertId;
-    if (fresh) { state.lastAlertId = id; playSiren(); }
+    // my area added to an alert already on screen (same id, a grown list)
+    const newlyMine = mineNow && !state.mineInAlert;
+    if (fresh || newlyMine) { state.lastAlertId = id; playSiren(); }
     state.alertActive = true;
+    hideLiveNotice();                          // a real alert replaces any notice
     showTakeover(title, desc, cities);
-    // every new siren starts the protected stay again: ten minutes count
-    // from the LAST alert, not the first
-    if (fresh) startShelterCountdown(cities);
+    if (mineNow && (fresh || newlyMine)) {
+      // every new alert for MY area starts the protected stay again
+      startShelterCountdown(cities, kind, null, title);
+    } else if (!mineNow && !stayRunning() && (fresh || !$('shelterCard').classList.contains('show'))) {
+      showNotMyAreaCard();                     // nobody here is in a stay: just say so
+    } else if (!mineNow && stayRunning()) {
+      // an alert somewhere else must never cut short or relabel my stay
+      $('scScope').textContent = `⚠ ממשיכים לשהות במרחב המוגן · ${state.stay.label}`;
+    }
+    // an all-clear that arrived in the same list as a siren elsewhere
+    if (!mineNow && stayRunning() && Array.isArray(data.ended)) {
+      const e = alertTouchesMe(data.ended);
+      if (e.city || e.region) endShelterStay();
+    }
+    state.mineInAlert = mineNow;
     setAlertChrome(true, cities.length);
   } else {
     state.alertActive = false;
+    state.mineInAlert = false;
     if (String(state.lastAlertId || '').includes('syn:')) state.lastAlertId = null;
     hideTakeover();
     setAlertChrome(false, 0);
@@ -3296,84 +3344,130 @@ function setAlertChrome(hot, n) {
 
 // ---- shelter countdown (מצב התגוננות) ----
 // Phase 1: seconds to reach the protected space (per-locality time).
-// Phase 2: the 10 minutes to remain inside, per Home Front Command guidance.
-// Phase 3: all-clear. Runs only when the alert covers MY city/region.
+// Phase 2: the 10 minutes to remain inside, per Home Front Command guidance -
+//          or, for a "stay until further notice" message, until Oref says so.
+// Phase 3: all-clear, shown for a minute.
+// The stay runs on wall-clock deadlines (a throttled or busy page cannot slow
+// it down) and is saved, so a reload, a browser restart or the page's own
+// crash recovery resumes it instead of silently dropping it.
 let _shelterTimer = null;
 const SHELTER_STAY_SEC = 10 * 60;
+const STAY_KEY = 'dl-stay';
+const SHELTER_FURTHER_NOTICE_MAX = 3 * 60 * 60e3;
 
-function endShelterStay() {
+function stayRunning() { return !!_shelterTimer && !!state.stay; }
+function saveStay() { try { state.stay ? LS_RAW.set.call(localStorage, STAY_KEY, JSON.stringify(state.stay)) : LS_RAW.rem.call(localStorage, STAY_KEY); } catch {} }
+
+function showNotMyAreaCard() {
   const card = $('shelterCard');
-  if (_shelterTimer) { clearInterval(_shelterTimer); _shelterTimer = null; }
-  card.classList.remove('mine'); card.classList.add('safe');
-  $('scCount').textContent = '✓';
-  $('scPhase').textContent = 'ניתן לצאת מהמרחב המוגן';
-  $('scNote').textContent = 'פיקוד העורף הודיע על סיום האירוע · הישמעו להנחיות';
-}
-function startShelterCountdown(areas) {
-  const card = $('shelterCard');
-  const me = alertTouchesMe(areas);
+  const me = alertTouchesMe([]);
   card.classList.remove('mine', 'safe');
+  card.classList.add('show', 'safe');
+  $('scScope').textContent = 'ההתראה אינה כוללת את האזור שלך';
+  $('scCount').textContent = '✓';
+  $('scPhase').textContent = me.mine ? `${me.mine} — לא בהתראה` : 'לא באזור שלך';
+  $('scNote').textContent = 'המשיכו בשגרה · עקבו אחר העדכונים';
+}
+
+function startShelterCountdown(areas, kind, saved, title) {
+  const card = $('shelterCard');
   if (_shelterTimer) { clearInterval(_shelterTimer); _shelterTimer = null; }
-
-  if (!me.city && !me.region) {
-    // not our area — say so plainly instead of a scary countdown
-    card.classList.add('show');
-    $('scScope').textContent = 'ההתראה אינה כוללת את האזור שלך';
-    $('scCount').textContent = '✓';
-    card.classList.add('safe');
-    $('scPhase').textContent = me.mine ? `${me.mine} — לא בהתראה` : 'לא באזור שלך';
-    $('scNote').textContent = 'המשיכו בשגרה · עקבו אחר העדכונים';
-    return;
+  let st = saved;
+  if (!st) {
+    const me = alertTouchesMe(areas);
+    if (!me.city && !me.region) { showNotMyAreaCard(); return; }
+    const label = me.city ? (me.mine || 'האזור שלך') : `אזור ${me.regionName}`;
+    const sec = shelterSecFor(me.city ? me.mine : label);
+    const now = Date.now();
+    st = { at: now, label, sec, title: title || '', kind: kind || 'attack', areas: (areas || []).slice(0, 60),
+           scope: me.city ? `⚠ ההתראה כוללת את ${label}` : `⚠ התראה ב${label}`,
+           p1End: now + sec * 1000,
+           // "stay until further notice": no "you may leave" from the clock
+           stayEnd: kind === 'shelter' ? null : now + (sec + SHELTER_STAY_SEC) * 1000 };
   }
-
-  const label = me.city ? (me.mine || 'האזור שלך') : `אזור ${me.regionName}`;
-  const sec = shelterSecFor(me.city ? me.mine : label);
+  state.stay = st;
+  saveStay();
+  card.classList.remove('safe');
   card.classList.add('show', 'mine');
-  $('scScope').textContent = me.city ? `⚠ ההתראה כוללת את ${label}` : `⚠ התראה ב${label}`;
-  $('scNote').textContent = `זמן התגוננות ${sec} שניות · לפי פיקוד העורף`;
-
-  let phase = 1, left = sec;
+  $('takeover').classList.remove('ended');
+  $('scScope').textContent = st.scope;
   const tick = () => {
-    if (phase === 1) {
-      $('scCount').textContent = left;
-      $('scPhase').textContent = 'היכנסו עכשיו למרחב המוגן';
-      if (left <= 0) { phase = 2; left = SHELTER_STAY_SEC; }
-      else { left--; return; }
+    const t = Date.now();
+    if (t < st.p1End) {
+      $('scCount').textContent = Math.ceil((st.p1End - t) / 1000);
+      // a "shelter" message carries its own instruction (it may be "stay in
+      // the open" for an earthquake): show Oref's words, not ours
+      $('scPhase').textContent = st.kind === 'shelter' && st.title ? st.title : 'היכנסו עכשיו למרחב המוגן';
+      $('scNote').textContent = `זמן התגוננות ${st.sec} שניות · לפי פיקוד העורף`;
+      return;
     }
-    if (phase === 2) {
-      const m = Math.floor(left / 60), s = left % 60;
-      $('scCount').textContent = `${m}:${String(s).padStart(2, '0')}`;
-      $('scPhase').textContent = 'הישארו במרחב המוגן';
+    if (st.stayEnd == null) {
+      const m = Math.floor((t - st.p1End) / 60000);
+      $('scCount').textContent = `${m}′`;
+      $('scPhase').textContent = st.title || 'הישארו במרחב המוגן עד להודעה מפיקוד העורף';
+      $('scNote').textContent = t - st.at > SHELTER_FURTHER_NOTICE_MAX
+        ? 'לא התקבלה הודעת סיום — בדקו ביישומון או באתר פיקוד העורף'
+        : 'פיקוד העורף הורה להישאר עד להודעה חדשה · לא לפי שעון';
+      return;
+    }
+    if (t < st.stayEnd || state.alertActive) {
+      const left = Math.max(0, Math.ceil((st.stayEnd - t) / 1000));
+      $('scCount').textContent = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+      // time is up but the alert is still on: never say "you may leave"
+      $('scPhase').textContent = left > 0 ? 'הישארו במרחב המוגן' : 'הישארו במרחב המוגן — ההתראה עדיין פעילה';
       $('scNote').textContent = 'ניתן לצאת רק לאחר 10 דקות, אלא אם ניתנה הנחיה אחרת';
-      if (left <= 0 && state.alertActive) {
-        // time is up but the alert is still on: never say "you may leave"
-        $('scCount').textContent = '0:00';
-        $('scPhase').textContent = 'הישארו במרחב המוגן — ההתראה עדיין פעילה';
-        return;
-      }
-      if (left <= 0) {
-        phase = 3;
-        card.classList.remove('mine'); card.classList.add('safe');
-        $('scCount').textContent = '✓';
-        $('scPhase').textContent = 'ניתן לצאת מהמרחב המוגן';
-        $('scNote').textContent = 'הישמעו להנחיות פיקוד העורף · התרחקו מחפצים חשודים';
-        clearInterval(_shelterTimer); _shelterTimer = null;
-        return;
-      }
-      left--;
+      return;
     }
+    finishStay('ניתן לצאת מהמרחב המוגן', 'הישמעו להנחיות פיקוד העורף · התרחקו מחפצים חשודים');
   };
   tick();
   _shelterTimer = setInterval(tick, 1000);
 }
 
+// The all-clear stays on screen for a minute: it is the one message people
+// wait ten minutes for, and the next quiet poll used to hide it at once.
+function finishStay(phase, note) {
+  if (_shelterTimer) { clearInterval(_shelterTimer); _shelterTimer = null; }
+  state.stay = null;
+  saveStay();
+  const card = $('shelterCard');
+  card.classList.remove('mine');
+  card.classList.add('show', 'safe');
+  $('scCount').textContent = '✓';
+  $('scPhase').textContent = phase;
+  $('scNote').textContent = note;
+  if (!state.alertActive) {
+    $('takeoverTitle').textContent = '✓ ' + phase;
+    $('takeover').classList.add('show', 'ended');
+  }
+  state.stayDoneUntil = Date.now() + 60e3;
+  setTimeout(() => { if (Date.now() >= state.stayDoneUntil - 50) hideTakeover(); }, 60e3);
+}
+function endShelterStay() {
+  finishStay('ניתן לצאת מהמרחב המוגן', 'פיקוד העורף הודיע על סיום האירוע · הישמעו להנחיות');
+}
+// a stay that was running when the page went away continues where it was
+function resumeStay() {
+  let st = null;
+  try { st = JSON.parse(localStorage.getItem(STAY_KEY) || 'null'); } catch {}
+  if (!st || typeof st.p1End !== 'number') return;
+  const t = Date.now();
+  const over = st.stayEnd != null ? t >= st.stayEnd : t - st.at > SHELTER_FURTHER_NOTICE_MAX;
+  if (over) { try { LS_RAW.rem.call(localStorage, STAY_KEY); } catch {} return; }
+  $('takeoverTitle').textContent = st.title ? `${alertIcon(st.title).icon} ${st.title}` : 'צבע אדום';
+  $('takeoverSub').textContent = 'השהייה במרחב המוגן נמשכת';
+  $('takeoverCities').innerHTML = (st.areas || []).map(c => `<span class="takeover-city">${esc(c)}</span>`).join('');
+  $('takeover').classList.add('show');
+  startShelterCountdown(st.areas, null, st);
+}
+
 function showTakeover(title, desc, cities) {
   const t = $('takeover');
   const ai = alertIcon(title);
+  t.classList.remove('ended');
   $('takeoverTitle').textContent = `${ai.icon} ${title || 'צבע אדום'}`;
   $('takeoverSub').textContent = desc || 'היכנסו למרחב מוגן';
   $('takeoverCities').innerHTML = cities.map(c=>`<span class="takeover-city">${esc(c)}</span>`).join('');
-  if (!t.classList.contains('show')) startShelterCountdown(cities);
   t.classList.add('show');
 }
 function hideTakeover() {
@@ -3381,7 +3475,8 @@ function hideTakeover() {
   // keep the "stay inside" countdown running even after the siren clears —
   // the 10 protected minutes are exactly when people wrongly walk out
   if (_shelterTimer) return;
-  $('takeover').classList.remove('show');
+  if (Date.now() < (state.stayDoneUntil || 0)) return;      // the all-clear minute
+  $('takeover').classList.remove('show', 'ended');
   $('shelterCard').classList.remove('show', 'mine', 'safe');
 }
 
@@ -4695,7 +4790,7 @@ function renderHealthPill() {
   const critical = down.filter(x => x.critical);
   const stFail = (d.selftest && d.selftest.failed) || [];
   const brainBad = d.brain && d.brain.up && d.brain.health && d.brain.health.failing;
-  const n = new Set([...down.map(x => x.label), ...stFail]).size + (brainBad ? 1 : 0);
+  const n = new Set([...down.map(x => x.label), ...stFail]).size + (brainBad ? 1 : 0) + ((d.tlsUnverified || []).length ? 1 : 0);
   const critTest = (d.selftest && d.selftest.criticalFailed) || [];
   pill.classList.add(critical.length || critTest.length ? 'h-bad' : n ? 'h-warn' : 'h-ok');
   $('healthVal').textContent = n ? String(n) : '✓';
@@ -4755,6 +4850,7 @@ $('healthRun').addEventListener('click', async () => {
   $('healthRun').disabled = false; $('healthRun').textContent = 'הרץ בדיקה עכשיו';
 });
 setTimeout(() => { if (state.alertSound) ensureAudio(); }, 0);
+setTimeout(resumeStay, 0);
 for (const ev of ['pointerdown', 'keydown', 'touchstart']) addEventListener(ev, () => { if (state.alertSound) ensureAudio(); }, { passive: true });
 setInterval(renderAudioBlocked, 15000);
 setTimeout(refreshSysHealth, 6000);
@@ -5082,7 +5178,7 @@ document.addEventListener('keydown', e => {
   if (!$('archiveOverlay').hidden) $('archiveOverlay').hidden = true;
 });
 
-const DL_BUILD = '17.11-80';
+const DL_BUILD = '17.11-81';
 console.log('%cDispatch LIVE build ' + DL_BUILD, 'color:#22d3ee;font-weight:bold');
 const TENSION_W = { alerts: 0.50, idf: 0.20, news: 0.30 };  // component weights
 const TENSION_BASELINE = 12;   // structural background level for Israel
@@ -5611,12 +5707,12 @@ $('castNowBtn') && $('castNowBtn').addEventListener('click', async () => {
 });
 $('castClose').addEventListener('click', () => $('castModal').classList.remove('show'));
 $('castModal').addEventListener('click', (e) => { if (e.target === $('castModal')) $('castModal').classList.remove('show'); });
-$('takeoverDismiss').addEventListener('click', () => { if (_shelterTimer) { clearInterval(_shelterTimer); _shelterTimer = null; } $('takeover').classList.remove('show'); $('shelterCard').classList.remove('show','mine','safe'); });
+$('takeoverDismiss').addEventListener('click', () => { if (_shelterTimer) { clearInterval(_shelterTimer); _shelterTimer = null; } state.stay = null; saveStay(); state.stayDoneUntil = 0; $('takeover').classList.remove('show','ended'); $('shelterCard').classList.remove('show','mine','safe'); });
 $('alertTestBtn').addEventListener('click', () => {
   // Preview the takeover (does NOT mean a real alert)
   showTakeover('צבע אדום — בדיקה', 'תצוגה מקדימה · אין אזעקה אמיתית', ['תל אביב','חיפה','אשקלון','שדרות','ירושלים']);
   if(!alertAudio) initAudio(); playSiren();
-  setTimeout(()=>{ if(!state.alertActive) $('takeover').classList.remove('show'); }, 5000);
+  setTimeout(()=>{ if(!state.alertActive && !stayRunning()) $('takeover').classList.remove('show'); }, 5000);
 });
 
 // ============================================================
@@ -5827,7 +5923,7 @@ function maybeFullReload() {
   // Never during an alert or while the protected-stay countdown runs: a reload
   // would wipe the countdown and silence the screen at the worst moment. The
   // reload happens on the first quiet minute after it.
-  const busy = state.alertActive || _shelterTimer || $('takeover').classList.contains('show');
+  const busy = state.alertActive || stayRunning() || $('takeover').classList.contains('show');
   if (!busy) location.reload();
 }
 setInterval(maybeFullReload, 60 * 1000);
@@ -5845,7 +5941,8 @@ function noteFatal() {
   _errBurst++;
   // 5+ errors within a minute, and we've been up over 10 min → recover.
   if (_errBurst >= 5 && (now - BOOT_TIME) > 10 * 60 * 1000) {
-    if (!state.alertActive) location.reload();
+    // a reload now resumes a saved stay, but never interrupt a live alert
+    if (!state.alertActive && !$('takeover').classList.contains('show')) location.reload();
   }
 }
 window.addEventListener('error', noteFatal);

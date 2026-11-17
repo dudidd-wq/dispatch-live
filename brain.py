@@ -504,6 +504,16 @@ def _note_failure(e):
 _verify_gate = threading.Lock()
 
 
+def _never_reached_google(e):
+    """True when the request certainly never got to Google."""
+    import socket as _s
+    if isinstance(e, urllib.error.HTTPError):
+        return False
+    r = e.reason if isinstance(e, urllib.error.URLError) else e
+    return isinstance(r, (ssl.SSLCertVerificationError, ConnectionRefusedError, _s.gaierror)) or \
+        "CERTIFICATE_VERIFY_FAILED" in str(e)
+
+
 def verify(reason="scheduled", n=None, force_all=False):
     """Buy the truth for a prioritised batch, learn from it, record the spend.
 
@@ -548,6 +558,15 @@ def _verify_locked(key, reason, n, force_all):
                 with _lock:
                     STATE["usedMonth"] = max(0, STATE["usedMonth"] - 1)
                     STATE["usedDay"] = max(0, STATE["usedDay"] - 1)
+                continue
+            if _never_reached_google(e):
+                # certificate, DNS or connection refused: nothing was sent, so
+                # nothing is charged - and the rest of the batch would fail the
+                # same way, so stop here
+                with _lock:
+                    STATE["usedMonth"] = max(0, STATE["usedMonth"] - 1)
+                    STATE["usedDay"] = max(0, STATE["usedDay"] - 1)
+                break
             continue
         ratio = dur / stat
         with _lock:

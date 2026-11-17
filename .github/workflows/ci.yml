@@ -17,7 +17,7 @@ jobs:
       - name: Python unit tests (stdlib only)
         run: python -m unittest discover -s tests -v
       - name: Inline JavaScript parses
-        run: node tests/check_js.js
+        run: node tests/check_js.js && node tests/check_alertkind.js
       - name: Render test in a headless browser
         run: |
           npm install --no-save playwright@1.48.2
