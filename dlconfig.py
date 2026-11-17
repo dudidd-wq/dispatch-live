@@ -50,7 +50,10 @@ DEFAULTS = {
         "dailyCap": 200,
         "rush": [[7, 9], [16, 19]],  # inclusive hour ranges, Israel time
     },
-    "display": {"fontScale": 1.0},
+    # fontScale: news headlines; uiScale: every other text on the screen;
+    # newsCols 0 = by width; startFocus "" = the last one chosen;
+    # lifeStrip: "all" | "not-tv" (hidden in TV focus) | "off"
+    "display": {"fontScale": 1.0, "uiScale": 1.0, "newsCols": 0, "startFocus": "", "lifeStrip": "all"},
 }
 
 PREF_KEYS = tuple(DEFAULTS["prefs"].keys())
@@ -239,7 +242,13 @@ def sanitize(cfg):
             out["prefs"][k] = old_ch[out["prefs"][k]]
 
     disp = cfg.get("display") if isinstance(cfg.get("display"), dict) else {}
-    out["display"] = {"fontScale": round(_num(disp.get("fontScale"), 0.8, 1.5, 1.0), 2)}
+    out["display"] = {
+        "fontScale": round(_num(disp.get("fontScale"), 0.8, 1.5, 1.0), 2),
+        "uiScale": round(_num(disp.get("uiScale"), 0.9, 1.4, 1.0), 2),
+        "newsCols": int(_num(disp.get("newsCols"), 0, 4, 0)),
+        "startFocus": disp.get("startFocus") if disp.get("startFocus") in ("grid", "tv", "news", "alerts") else "",
+        "lifeStrip": disp.get("lifeStrip") if disp.get("lifeStrip") in ("all", "not-tv", "off") else "all",
+    }
     return out
 
 

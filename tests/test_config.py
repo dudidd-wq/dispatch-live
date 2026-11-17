@@ -203,3 +203,15 @@ class TestV76IdsWithSkippedEntries(Tmp):
         self.assertEqual(json.loads(c["prefs"]["dl-tv"]), [b_id])
         self.assertEqual(c["prefs"]["dl-featured"], b_id)
         self.assertNotIn("_raw", c["channels"]["custom"][0])
+
+
+class TestDisplaySettings(unittest.TestCase):
+    def test_defaults_change_nothing_on_screen(self):
+        d = dlconfig.sanitize({})["display"]
+        self.assertEqual(d, {"fontScale": 1.0, "uiScale": 1.0, "newsCols": 0, "startFocus": "", "lifeStrip": "all"})
+
+    def test_values_are_clamped_and_unknown_choices_fall_back(self):
+        d = dlconfig.sanitize({"display": {"uiScale": 9, "newsCols": "7", "startFocus": "<script>", "lifeStrip": "maybe"}})["display"]
+        self.assertEqual((d["uiScale"], d["newsCols"], d["startFocus"], d["lifeStrip"]), (1.4, 4, "", "all"))
+        d = dlconfig.sanitize({"display": {"uiScale": "1.2", "newsCols": 2, "startFocus": "alerts", "lifeStrip": "not-tv"}})["display"]
+        self.assertEqual((d["uiScale"], d["newsCols"], d["startFocus"], d["lifeStrip"]), (1.2, 2, "alerts", "not-tv"))
