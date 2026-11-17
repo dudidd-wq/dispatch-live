@@ -208,3 +208,52 @@ def mtime():
         except OSError:
             pass
     return out
+
+
+class _RotatingLog:
+    """A stdout/stderr replacement that writes to logs/<name>.log and rolls
+    the file at ~1 MB, keeping three old copies. Used when the deck runs in
+    the background with no console window (pythonw has no stdout at all)."""
+
+    def __init__(self, name, limit=1024 * 1024, keep=3):
+        self.dir = os.path.join(ROOT, "logs")
+        self.path = os.path.join(self.dir, name + ".log")
+        self.limit, self.keep = limit, keep
+        self._lock = threading.Lock()
+        os.makedirs(self.dir, exist_ok=True)
+
+    def write(self, text):
+        if not text:
+            return 0
+        import time as _t
+        with self._lock:
+            try:
+                if os.path.exists(self.path) and os.path.getsize(self.path) > self.limit:
+                    for i in range(self.keep - 1, 0, -1):
+                        a, b = "%s.%d" % (self.path, i), "%s.%d" % (self.path, i + 1)
+                        if os.path.exists(a):
+                            os.replace(a, b)
+                    os.replace(self.path, self.path + ".1")
+                with open(self.path, "a", encoding="utf-8") as f:
+                    for line in str(text).splitlines(True):
+                        f.write((_t.strftime("%Y-%m-%d %H:%M:%S ") if line.strip() else "") + line)
+            except Exception:
+                pass
+        return len(text)
+
+    def flush(self):
+        pass
+
+    def isatty(self):
+        return False
+
+
+def setup_logging(name):
+    """Send prints and tracebacks to logs/<name>.log when there is no console
+    (pythonw) or when DL_LOG=1. Returns True when file logging is on."""
+    import sys
+    if os.environ.get("DL_LOG", "") == "1" or sys.stdout is None or sys.stderr is None:
+        log = _RotatingLog(name)
+        sys.stdout = sys.stderr = log
+        return True
+    return False

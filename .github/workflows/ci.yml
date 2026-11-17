@@ -23,3 +23,50 @@ jobs:
           npm install --no-save playwright@1.48.2
           npx playwright install --with-deps chromium
           node tests/render_test.js
+
+  # A new build number on main becomes a tagged GitHub Release with the
+  # install zip attached. The release is skipped when that tag already exists.
+  release:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build number
+        id: v
+        run: |
+          build=$(grep -o "const DL_BUILD = '[^']*'" index.html | cut -d"'" -f2)
+          test -n "$build"
+          n=${build##*-}
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          echo "tag=v$n" >> "$GITHUB_OUTPUT"
+      - name: Skip when this build is already released
+        id: exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${{ steps.v.outputs.tag }}" >/dev/null 2>&1; then
+            echo "yes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "yes=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build the install zip
+        if: steps.exists.outputs.yes == 'false'
+        run: |
+          mkdir -p out/dispatch-live-app
+          cp index.html server.py brain.py dlconfig.py dlarchive.py *.bat *.sh *.command README.md CHANGELOG.md out/dispatch-live-app/
+          cp -r docs out/dispatch-live-app/docs
+          (cd out && zip -qr ../dispatch-live-app.zip dispatch-live-app)
+          # release notes = this build's section of the changelog
+          awk -v b="${{ steps.v.outputs.build }}" '
+            /^## /{ if (on) exit; on = index($0, b) > 0; next } on' CHANGELOG.md > notes.md
+          test -s notes.md || echo "Build ${{ steps.v.outputs.build }}" > notes.md
+      - name: Publish the release
+        if: steps.exists.outputs.yes == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.v.outputs.tag }}" dispatch-live-app.zip \
+            --target "$GITHUB_SHA" --title "Dispatch LIVE ${{ steps.v.outputs.build }}" --notes-file notes.md

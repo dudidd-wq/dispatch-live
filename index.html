@@ -944,6 +944,20 @@
   .set-btn.primary { background:var(--live); border-color:var(--live); color:#04121a; font-weight:800; }
   .set-btn:disabled { opacity:0.45; cursor:default; }
   .set-msg { font-size:12.5px; color:var(--subtle); }
+  .arc-tabs { display:inline-flex; gap:4px; margin-inline-start:14px; }
+  .arc-tab { background:rgba(255,255,255,0.05); border:1px solid var(--line); color:var(--ink-2); border-radius:7px; padding:3px 10px; font-size:12px; font-family:inherit; cursor:pointer; }
+  .arc-tab.on { background:var(--live); border-color:var(--live); color:#04121a; font-weight:800; }
+  .arc-cards { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+  @media (max-width:1100px) { .arc-cards { grid-template-columns:1fr; } }
+  .arc-card { border:1px solid var(--line); border-radius:10px; padding:11px 13px; background:rgba(255,255,255,0.025); min-width:0; }
+  .arc-card .k { font-size:11.5px; color:var(--subtle); margin-bottom:3px; }
+  .arc-card .v { font-size:21px; font-weight:800; color:var(--ink); line-height:1.15; }
+  .arc-card .d { font-size:12.5px; margin-top:5px; line-height:1.45; }
+  .arc-chip { display:inline-block; border:1px solid var(--line); border-radius:999px; padding:1px 8px; margin:2px 0 0 4px; font-size:11.5px; }
+  .arc-chart { width:100%; height:auto; display:block; direction:ltr; }
+  .arc-chart text { font-family:'JetBrains Mono',monospace; font-size:10px; fill:#8091a7; }
+  .arc-grid2 { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+  @media (max-width:1100px) { .arc-grid2 { grid-template-columns:1fr; } }
   .tro-head {
     display:flex; align-items:center; gap:10px;
     padding:10px 14px; border-bottom:1px solid var(--line);
@@ -1449,7 +1463,7 @@
     </div>
     <div class="brand-text">
       <div class="brand-title"><span class="live-dot" id="sysDot"></span>חדר <span style="color:var(--live)">מצב</span></div>
-      <div class="brand-sub" id="brandSub">DISPATCH LIVE · IL <b class="build-tag" title="גרסת הקבצים שרצה כרגע — אם אחרי עדכון המספר לא השתנה, מוגשת גרסה ישנה">v17.11-74</b></div>
+      <div class="brand-sub" id="brandSub">DISPATCH LIVE · IL <b class="build-tag" title="גרסת הקבצים שרצה כרגע — אם אחרי עדכון המספר לא השתנה, מוגשת גרסה ישנה">v17.11-75</b></div>
     </div>
   </div>
 
@@ -1495,6 +1509,9 @@
       </button>
       <button class="icon-btn" id="castBtn" title="שידור למסך / טלוויזיה">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 16.1A5 5 0 0 1 5.9 20M2 12.05A9 9 0 0 1 9.95 20M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6"/><line x1="2" y1="20" x2="2.01" y2="20"/></svg>
+      </button>
+      <button class="icon-btn" id="archiveBtn" title="ארכיון וסיכום תקופה">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>
       </button>
       <button class="icon-btn" id="settingsBtn" title="הגדרות">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -1638,6 +1655,16 @@
     <button class="tro-close" id="healthClose">סגור ✕</button>
   </div>
   <div class="sys-body" id="healthBody"></div>
+</div>
+
+<div class="traffic-overlay sys-overlay" id="archiveOverlay" hidden>
+  <div class="tro-head">
+    <span class="tro-title">ארכיון</span>
+    <span class="tro-sub" id="archiveSub"></span>
+    <span class="spacer"></span>
+    <button class="tro-close" id="archiveClose">סגור ✕</button>
+  </div>
+  <div class="sys-body" id="archiveBody"></div>
 </div>
 
 <div class="traffic-overlay sys-overlay" id="settingsOverlay" hidden>
@@ -4444,7 +4471,8 @@ function renderHealthPanel() {
       <td class="num"></td><td class="num">${Math.round(okFeeds.reduce((a, h) => a + h.ms, 0) / okFeeds.length)} ms בממוצע</td><td class="num"></td></tr>` : '';
   const srcRows = shown.map(h => `<tr>
       <td>${dot(h.state)}${esc(h.label)}${h.critical ? ' <span class="sys-meta">קריטי</span>' : ''}
-        ${h.state === 'down' ? `<div class="hl-err">${esc(h.error || '')}${h.streak > 1 ? ' · ' + h.streak + ' כישלונות ברצף' : ''}</div>` : ''}</td>
+        ${h.state === 'down' ? `<div class="hl-err">${esc(h.error || '')}${h.streak > 1 ? ' · ' + h.streak + ' כישלונות ברצף' : ''}</div>` : ''}
+        ${h.state === 'down' && h.servedStale != null ? `<div class="sys-meta">המסך מציג בינתיים את התשובה התקינה האחרונה, ${agoHe(h.servedStale)}</div>` : ''}</td>
       <td class="num">${h.state === 'down' ? (h.okAgo == null ? 'לא ענה מאז ההפעלה' : 'תקין ' + agoHe(h.okAgo)) : agoHe(h.tryAgo)}</td>
       <td class="num">${h.ms} ms</td>
       <td class="num">${h.okCount} ✓ · ${h.failCount} ✗</td></tr>`).join('') + feedsRow;
@@ -4481,6 +4509,99 @@ $('healthRun').addEventListener('click', async () => {
 });
 setTimeout(refreshSysHealth, 6000);
 setInterval(refreshSysHealth, 60000);
+
+/* ============================================================
+   ARCHIVE  (server /archive/*, stored locally in data/archive.db)
+   A period summary on top, then a week or a month of charts.
+   ============================================================ */
+const arch = { hours: 24, days: 7 };
+const hhmm = ts => new Date(ts * 1000).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+const ddmm = ts => { const d = new Date(ts * 1000); return String(d.getDate()).padStart(2, '0') + '.' + String(d.getMonth() + 1).padStart(2, '0'); };
+const whenHe = ts => (Date.now() / 1000 - ts > 20 * 3600 ? ddmm(ts) + ' ' : '') + hhmm(ts);
+
+function arcLine(points, W, H) {
+  if (points.length < 2) return '<div class="sys-meta">עדיין אין מספיק קריאות לגרף.</div>';
+  const t0 = points[0][0], t1 = points[points.length - 1][0], pl = 26, pb = 16, pt = 6;
+  const x = t => pl + (t - t0) / Math.max(1, t1 - t0) * (W - pl - 6);
+  const y = v => pt + (1 - v / 100) * (H - pt - pb);
+  const path = points.map((p, i) => (i ? 'L' : 'M') + x(p[0]).toFixed(1) + ' ' + y(p[1]).toFixed(1)).join(' ');
+  const grid = [0, 25, 50, 75, 100].map(v => `<line x1="${pl}" x2="${W - 6}" y1="${y(v)}" y2="${y(v)}" stroke="rgba(255,255,255,0.07)"/><text x="${pl - 5}" y="${y(v) + 3}" text-anchor="end">${v}</text>`).join('');
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map(f => { const t = t0 + f * (t1 - t0);
+    return `<text x="${x(t)}" y="${H - 3}" text-anchor="${f === 0 ? 'start' : f === 1 ? 'end' : 'middle'}">${(t1 - t0 > 2 * 86400 ? ddmm(t) : hhmm(t))}</text>`; }).join('');
+  return `<svg class="arc-chart" viewBox="0 0 ${W} ${H}">${grid}${ticks}
+    <path d="${path} L ${x(t1)} ${y(0)} L ${x(t0)} ${y(0)} Z" fill="rgba(34,211,238,0.10)"/>
+    <path d="${path}" fill="none" stroke="#22d3ee" stroke-width="1.6" stroke-linejoin="round"/></svg>`;
+}
+function arcBars(values, days, W, H, color, unit) {
+  const max = Math.max(1, ...values), pl = 26, pb = 16, pt = 12;
+  const bw = (W - pl - 6) / values.length;
+  const every = Math.ceil(values.length / 8);
+  const bars = values.map((v, i) => {
+    const h = v / max * (H - pt - pb), bx = pl + i * bw + bw * 0.14;
+    return `<rect x="${bx.toFixed(1)}" y="${(H - pb - h).toFixed(1)}" width="${(bw * 0.72).toFixed(1)}" height="${Math.max(v ? 1.5 : 0, h).toFixed(1)}" rx="2" fill="${color}"><title>${days[i].slice(8, 10)}.${days[i].slice(5, 7)} · ${v}${unit}</title></rect>
+      ${v && values.length <= 14 ? `<text x="${(bx + bw * 0.36).toFixed(1)}" y="${(H - pb - h - 3).toFixed(1)}" text-anchor="middle">${v}</text>` : ''}
+      ${i % every === 0 ? `<text x="${(bx + bw * 0.36).toFixed(1)}" y="${H - 3}" text-anchor="middle">${days[i].slice(8, 10)}.${days[i].slice(5, 7)}</text>` : ''}`;
+  }).join('');
+  return `<svg class="arc-chart" viewBox="0 0 ${W} ${H}"><line x1="${pl}" x2="${W - 6}" y1="${H - pb}" y2="${H - pb}" stroke="rgba(255,255,255,0.12)"/>
+    <text x="${pl - 5}" y="${pt + 3}" text-anchor="end">${max}</text>${bars}</svg>`;
+}
+function renderArchive(sum, ser) {
+  const body = $('archiveBody');
+  const tabs = (cur, opts, attr) => `<span class="arc-tabs">${opts.map(([v, t]) => `<button class="arc-tab${v === cur ? ' on' : ''}" data-${attr}="${v}">${t}</button>`).join('')}</span>`;
+  const a = sum.alerts, t = sum.tension, tr = sum.traffic;
+  const alertsCard = !a ? '<div class="d">הארכיון לא זמין.</div>' : a.events
+    ? `<div class="v">${a.events === 1 ? 'אירוע אחד' : a.events + ' אירועים'}</div>
+       <div class="d">${a.localities === 1 ? 'ביישוב אחד' : 'ב-' + a.localities + ' יישובים'} · אחרון ${esc(a.last.at.slice(11, 16))} ${esc(a.last.at.slice(8, 10) + '.' + a.last.at.slice(5, 7))}</div>
+       <div class="d">${a.byType.map(([n, c]) => `<span class="arc-chip">${esc(n)} · ${c}</span>`).join('')}</div>
+       <div class="d">${a.topLocalities.map(([n, c]) => `<span class="arc-chip">${esc(n)}${c > 1 ? ' · ' + c : ''}</span>`).join('')}</div>`
+    : '<div class="v" style="color:var(--ok)">שקט</div><div class="d">לא נרשמו התרעות בתקופה.</div>';
+  const tensionCard = t
+    ? `<div class="v">${t.min === t.max ? t.min : t.min + ' עד ' + t.max}</div>
+       <div class="d">כעת ${t.last} · ממוצע ${t.avg} · שיא ב-${whenHe(t.peakAt)}</div>
+       <div class="d">${t.last > t.first + 4 ? 'עלה' : t.last < t.first - 4 ? 'ירד' : 'יציב'} לעומת תחילת התקופה (${t.first})</div>`
+    : '<div class="d">עדיין אין קריאות. המדד נשמר כל 5 דקות כשהמסך פתוח במחשב הזה.</div>';
+  const trafficCard = tr
+    ? (tr.peak ? `<div class="v">+${tr.peak.delayMin} דק׳</div><div class="d">שיא: ${esc(tr.peak.road)} ב-${whenHe(tr.peak.at)}</div>`
+               : '<div class="v" style="color:var(--ok)">זורם</div><div class="d">לא נרשם עיכוב מעל הסף.</div>')
+      + `<div class="d">${tr.heavyMinutes ? tr.heavyMinutes + ' דק׳ של עומס כבד' : 'בלי עומס כבד'}${tr.slowMinutes ? ' · ' + tr.slowMinutes + ' דק׳ של תנועה ערה' : ''}</div>
+         <div class="d">${tr.roads.map(r => `<span class="arc-chip">${esc(r.road)} · עד +${r.max}</span>`).join('')}</div>`
+    : '<div class="d">עדיין אין דגימות. התנועה נשמרת כל רבע שעה כששירות התנועה רץ.</div>';
+  const st = ser.stats || {};
+  const since = st.tension && st.tension.since ? ddmm(st.tension.since) : (st.alerts && st.alerts.since ? st.alerts.since.slice(8, 10) + '.' + st.alerts.since.slice(5, 7) : null);
+  $('archiveSub').textContent = ser.error ? 'הארכיון לא זמין' :
+    `נשמר במחשב הזה · ${(st.alerts || {}).rows || 0} התרעות · ${(st.tension || {}).rows || 0} קריאות מתיחות · ${(st.traffic || {}).rows || 0} דגימות תנועה${since ? ' · מאז ' + since : ''}`;
+  body.innerHTML = `
+    <h3>מה קרה ${tabs(arch.hours, [[12, '12 שעות'], [24, 'יממה'], [168, 'שבוע']], 'hours')}</h3>
+    <div class="arc-cards">
+      <div class="arc-card"><div class="k">התרעות</div>${alertsCard}</div>
+      <div class="arc-card"><div class="k">מד המתיחות</div>${tensionCard}</div>
+      <div class="arc-card"><div class="k">תנועה</div>${trafficCard}</div>
+    </div>
+    <h3>לאורך זמן ${tabs(arch.days, [[7, 'שבוע'], [30, 'חודש'], [90, '3 חודשים']], 'days')}</h3>
+    <div class="arc-card"><div class="k">מד המתיחות (0–100)</div>${arcLine(ser.tension || [], 1100, 190)}</div>
+    <div class="arc-grid2" style="margin-top:12px">
+      <div class="arc-card"><div class="k">אירועי התרעה ליום</div>${arcBars(ser.alertsPerDay || [], ser.dayList || [], 540, 170, '#ff2d55', ' אירועים')}</div>
+      <div class="arc-card"><div class="k">העיכוב הגבוה ביותר ביום (דקות)</div>${arcBars(ser.trafficMaxDelay || [], ser.dayList || [], 540, 170, '#f59e0b', ' דק׳')}</div>
+    </div>`;
+  body.querySelectorAll('[data-hours]').forEach(b => b.addEventListener('click', () => { arch.hours = +b.dataset.hours; loadArchive(); }));
+  body.querySelectorAll('[data-days]').forEach(b => b.addEventListener('click', () => { arch.days = +b.dataset.days; loadArchive(); }));
+}
+async function loadArchive() {
+  try {
+    const [sum, ser] = await Promise.all([
+      tfetch('/archive/summary?hours=' + arch.hours, { cache: 'no-store' }, 8000).then(r => r.json()),
+      tfetch('/archive/series?days=' + arch.days, { cache: 'no-store' }, 8000).then(r => r.json())]);
+    renderArchive(sum, ser);
+  } catch {
+    $('archiveBody').innerHTML = '<div class="hl-err">השרת לא החזיר נתוני ארכיון (/archive). ייתכן שרץ server.py ישן.</div>';
+  }
+}
+$('archiveBtn').addEventListener('click', () => {
+  $('archiveOverlay').hidden = false;
+  $('archiveBody').innerHTML = '<div class="sys-meta">טוען…</div>';
+  loadArchive();
+});
+$('archiveClose').addEventListener('click', () => { $('archiveOverlay').hidden = true; });
 
 /* ============================================================
    SETTINGS SCREEN  (writes config.local.json through POST /config)
@@ -4652,9 +4773,10 @@ document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
   if (!$('healthOverlay').hidden) $('healthOverlay').hidden = true;
   if (!$('settingsOverlay').hidden) $('settingsOverlay').hidden = true;
+  if (!$('archiveOverlay').hidden) $('archiveOverlay').hidden = true;
 });
 
-const DL_BUILD = '17.11-74';
+const DL_BUILD = '17.11-75';
 console.log('%cDispatch LIVE build ' + DL_BUILD, 'color:#22d3ee;font-weight:bold');
 const TENSION_W = { alerts: 0.50, idf: 0.20, news: 0.30 };  // component weights
 const TENSION_BASELINE = 12;   // structural background level for Israel
@@ -4813,9 +4935,19 @@ function tensionBoardHtml() {
   </div>`;
 }
 
+let _archTensionAt = 0;
+function archiveTension(t) {
+  // one reading per 5 minutes, only once real data is in, only from this computer
+  if (!state._tensionReady || !DL_CFG || !DL_CFG.writable) return;
+  if (Date.now() - _archTensionAt < 5 * 60e3) return;
+  _archTensionAt = Date.now();
+  fetch('/archive/tension', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ score: t.score, alerts: t.alerts, idf: t.idf, news: t.news }) }).catch(() => {});
+}
 function updateTension() {
   const p = $('tensionPill'); if (!p) return;
   const t = computeTension();
+  archiveTension(t);
   p.classList.remove('t-watch', 't-tense', 't-high');
   if (t.cls) p.classList.add(t.cls);
   $('tensionVal').textContent = t.score;

@@ -7,6 +7,8 @@ waze-mirror.on
 # runtime state
 data/
 logos/
+logs/
+backup/
 *.log
 
 # python / node / editors

@@ -7,7 +7,7 @@ const fs = require('fs'), os = require('os');
 const SRC = path.join(__dirname, '..');
 // a scratch copy: the settings test writes config.local.json and must not touch the checkout
 const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-render-'));
-for (const f of ['index.html', 'server.py', 'brain.py', 'dlconfig.py']) fs.copyFileSync(path.join(SRC, f), path.join(ROOT, f));
+for (const f of ['index.html', 'server.py', 'brain.py', 'dlconfig.py', 'dlarchive.py']) fs.copyFileSync(path.join(SRC, f), path.join(ROOT, f));
 const PORT = process.env.PORT || '3187';
 
 (async () => {
@@ -21,7 +21,7 @@ const PORT = process.env.PORT || '3187';
     // secrets and runtime state must never be reachable as static files
     fs.writeFileSync(path.join(ROOT, 'google.key'), 'not-a-real-key');
     fs.writeFileSync(path.join(ROOT, 'config.local.json'), '{}');
-    for (const f of ['google.key', 'config.local.json', '.gitignore', 'data/state.json']) {
+    for (const f of ['google.key', 'config.local.json', '.gitignore', 'data/state.json', 'data/archive.db', 'logs/server.log']) {
       const r = await fetch('http://127.0.0.1:' + PORT + '/' + f);
       if (r.status !== 404) fail('/' + f + ' is served as a static file (HTTP ' + r.status + ')');
     }
@@ -53,6 +53,22 @@ const PORT = process.env.PORT || '3187';
     console.log('health', JSON.stringify(hp));
     if (hp.rows < 3) fail('health panel is empty');
     await page.click('#healthClose');
+
+    // archive: the deck's own tension readings must come back as a summary and a chart
+    const posted = await page.evaluate(async () => {
+      const r = await fetch('/archive/tension', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ score: 37, alerts: 1, idf: 2, news: 3 }) });
+      return r.status;
+    });
+    if (posted !== 200) fail('POST /archive/tension answered ' + posted);
+    await page.click('#archiveBtn');
+    await page.waitForTimeout(1500);
+    const ar = await page.evaluate(() => ({ cards: document.querySelectorAll('#archiveBody .arc-card').length,
+      charts: document.querySelectorAll('#archiveBody svg.arc-chart').length,
+      text: document.getElementById('archiveBody').textContent.includes('37') }));
+    console.log('archive', JSON.stringify(ar));
+    if (ar.cards < 5 || ar.charts < 2 || !ar.text) fail('archive panel incomplete');
+    await page.click('#archiveClose');
 
     // settings: change a threshold, save, and find it again after the reload
     await page.click('#settingsBtn');

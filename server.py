@@ -36,6 +36,7 @@ PORT = int(os.environ.get("PORT", "3100"))
 import time as _time
 import time
 import dlconfig
+import dlarchive
 LAST_REQ = {"t": None}   # armed on the first request
 
 def _touch_activity():
@@ -440,6 +441,7 @@ def fetch_oref_history():
     if rows is not None:
         api_seen = True
         if rows:
+            dlarchive.add_alerts(rows)
             _hist_status.update(source="api:lastDay", at=now, rows=len(rows), error="")
             return True, 200, _json.dumps(rows, ensure_ascii=False)
         if _hist_week["rows"] is None or now - _hist_week["t"] > 600:
@@ -447,6 +449,7 @@ def fetch_oref_history():
             wk = _normalize_oref_api(text2) if ok2 else None
             if wk is not None:
                 _hist_week.update(t=now, rows=wk)
+                dlarchive.add_alerts(wk)
         if _hist_week["rows"]:
             _hist_status.update(source="api:lastWeek", at=now,
                                 rows=len(_hist_week["rows"]), error="")
@@ -469,6 +472,13 @@ def fetch_oref_history():
             last = (True, 200, "[]")
     if api_seen and not last[0]:
         last = (True, 200, "[]")            # the API answered: genuinely quiet
+    if api_seen and last == (True, 200, "[]"):
+        # Oref only goes back a week. Our own archive goes back further, so the
+        # last event stays on the map through a quiet stretch.
+        old = dlarchive.recent_alerts(days=30, limit=250)
+        if old:
+            _hist_status.update(source="archive", at=now, rows=len(old), error="")
+            return True, 200, _json.dumps(old, ensure_ascii=False)
     _hist_status.update(source="api" if api_seen else "none", at=now, rows=0,
                         error="" if last[0] else "history unavailable")
     return last
@@ -1729,6 +1739,57 @@ def fetch_idf_spokesperson():
 
 
 # ============================================================
+#   LAST GOOD ANSWER
+#   ----------------------------------------------------------
+#   When a source fails, the deck keeps showing its last good answer (up to
+#   STALE_MAX_SEC old) instead of an empty panel. The response carries
+#   X-DL-Stale: <age in seconds>, and /health still records the failure, so
+#   nothing pretends to be fresh.
+#   Never applied to the live alert feed: an old "no alert" is worse than an
+#   honest "no connection".
+# ============================================================
+STALE_MAX_SEC = 6 * 3600
+STALE_NEVER = {"oref_alerts", "traffic"}        # traffic: the brain has its own cache
+_last_good = {}
+_last_good_lock = threading.Lock()
+
+
+def _remember_good(cache_id, status, body, ctype):
+    if len(body) > 1500000:
+        return
+    with _last_good_lock:
+        if len(_last_good) > 90 and cache_id not in _last_good:
+            oldest = min(_last_good, key=lambda k: _last_good[k][0])
+            _last_good.pop(oldest, None)
+        _last_good[cache_id] = (time.time(), body, ctype)
+
+
+def _recall_good(cache_id):
+    with _last_good_lock:
+        hit = _last_good.get(cache_id)
+    if hit and time.time() - hit[0] <= STALE_MAX_SEC:
+        return hit
+    return None
+
+
+def _archive_loop():
+    """Sample the traffic picture every 15 minutes; prune once a day."""
+    last_prune = 0
+    time.sleep(45)
+    while True:
+        try:
+            snap = brain_get("/traffic")
+            if snap:
+                dlarchive.add_traffic(snap)
+            if time.time() - last_prune > 86400:
+                dlarchive.prune()
+                last_prune = time.time()
+        except Exception:
+            pass
+        time.sleep(900)
+
+
+# ============================================================
 #   SOURCE HEALTH  +  DAILY SELF-TEST
 #   ----------------------------------------------------------
 #   Until v74 a source that broke simply vanished from the deck. Now every
@@ -1771,7 +1832,7 @@ def _health_key(path, query):
     return None
 
 
-def health_note(sid, label, ok, ms, err="", critical=False):
+def health_note(sid, label, ok, ms, err="", critical=False, stale=None):
     now = time.time()
     with _health_lock:
         h = _health.setdefault(sid, {"id": sid, "label": label, "critical": critical,
@@ -1779,6 +1840,7 @@ def health_note(sid, label, ok, ms, err="", critical=False):
                                      "ms": 0, "error": "", "okCount": 0, "failCount": 0,
                                      "streak": 0})
         h["label"], h["lastTry"], h["ms"] = label, now, int(ms)
+        h["servedStale"] = stale          # seconds old, when a failure was covered by the last good answer
         if ok:
             h.update(ok=True, lastOk=now, streak=0)
             h["okCount"] += 1
@@ -2026,6 +2088,19 @@ class Handler(BaseHTTPRequestHandler):
         self._resp = (status, body[:240])      # what the health wrapper inspects
         if isinstance(body, str):
             body = body.encode("utf-8")
+        hk, cid = getattr(self, "_hkey", None), getattr(self, "_cache_id", None)
+        if hk and cid and hk[0] not in STALE_NEVER:
+            if _error_of(status, body):
+                hit = _recall_good(cid)
+                if hit:
+                    age = int(time.time() - hit[0])
+                    self._stale = age
+                    status, body, content_type = 200, hit[1], hit[2]
+                    extra = dict(extra or {})
+                    extra["X-DL-Stale"] = str(age)
+                    extra["Access-Control-Expose-Headers"] = "X-DL-Stale"
+            else:
+                _remember_good(cid, status, body, content_type)
         # A client that gave up mid-response is routine here: the deck aborts
         # its own requests after 12s, tabs get closed, laptops sleep. Windows
         # reports that as ConnectionAbortedError (WinError 10053), which was
@@ -2057,6 +2132,17 @@ class Handler(BaseHTTPRequestHandler):
                 pass
             self._send(200, '{"ok":true}', "application/json; charset=utf-8",
                        {"Access-Control-Allow-Origin": "*", "Cache-Control": "no-store"})
+            return
+        if parsed.path == "/archive/tension":
+            ok = False
+            if _is_local_request(self):
+                try:
+                    length = int(self.headers.get("Content-Length", 0))
+                    d = json.loads(self.rfile.read(length).decode("utf-8", "replace")) if 0 < length < 2000 else {}
+                    ok = dlarchive.add_tension(d.get("score"), d.get("alerts"), d.get("idf"), d.get("news"))
+                except Exception:
+                    ok = False
+            self._send(200 if ok else 400, json.dumps({"ok": bool(ok)}), "application/json; charset=utf-8")
             return
         if parsed.path == "/config":
             if not _is_local_request(self):
@@ -2091,14 +2177,17 @@ class Handler(BaseHTTPRequestHandler):
         key = _health_key(parsed.path, parsed.query)
         if not key:
             return self._route_get()
-        self._resp = None
+        self._resp, self._stale = None, None
+        self._hkey, self._cache_id = key, self.path
         t0 = time.time()
         try:
             self._route_get()
         finally:
             status, body = self._resp or (599, "no response")
             err = _error_of(status, body)
-            health_note(key[0], key[1], not err, (time.time() - t0) * 1000, err, key[2])
+            health_note(key[0], key[1], not err, (time.time() - t0) * 1000, err, key[2],
+                        stale=self._stale)
+            self._hkey = self._cache_id = None
 
     def _route_get(self):
         _touch_activity()
@@ -2116,6 +2205,19 @@ class Handler(BaseHTTPRequestHandler):
                                         "results": _selftest["results"]}, ensure_ascii=False),
                        "application/json; charset=utf-8",
                        {"Access-Control-Allow-Origin": "*", "Cache-Control": "no-store"})
+            return
+        if parsed.path == "/archive/summary" or parsed.path == "/archive/series":
+            q = parse_qs(parsed.query or "")
+            try:
+                if parsed.path.endswith("summary"):
+                    out = dlarchive.summary(int((q.get("hours") or ["24"])[0]))
+                else:
+                    out = dlarchive.series(int((q.get("days") or ["7"])[0]))
+                    out["stats"] = dlarchive.stats()
+            except Exception as e:
+                out = {"error": "bad request: %s" % str(e)[:60]}
+            self._send(200, json.dumps(out, ensure_ascii=False), "application/json; charset=utf-8",
+                       {"Cache-Control": "no-store"})
             return
         if parsed.path == "/config":
             self._send(200, json.dumps({"config": dlconfig.load(), "local": dlconfig.load_local(),
@@ -2332,7 +2434,7 @@ class Handler(BaseHTTPRequestHandler):
         base = os.path.basename(file_path).lower()
         blocked = (base.endswith(".key") or base.startswith("config.local")
                    or base.startswith(".")
-                   or safe.replace("\\", "/").split("/")[0].lower() in ("data", ".git", ".github", "tests"))
+                   or safe.replace("\\", "/").split("/")[0].lower() in ("data", "logs", "backup", ".git", ".github", "tests"))
         if blocked or not file_path.startswith(ROOT) or not os.path.isfile(file_path):
             self._send(404, "Not found", "text/plain; charset=utf-8")
             return
@@ -2362,6 +2464,7 @@ def _lan_ip():
 
 
 def main():
+    dlconfig.setup_logging("server")       # logs/server.log when there is no console
     line = "=" * 48
     # NETWORK mode: set NETWORK=1 to let other devices on your Wi-Fi (phone,
     # tablet) reach the deck. Default is localhost-only (this machine).
@@ -2400,6 +2503,7 @@ def main():
         print()
     threading.Thread(target=_activity_watchdog, daemon=True).start()
     threading.Thread(target=_selftest_loop, daemon=True).start()
+    threading.Thread(target=_archive_loop, daemon=True).start()
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

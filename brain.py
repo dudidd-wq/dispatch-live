@@ -795,6 +795,7 @@ class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
 
 def main():
+    dlconfig.setup_logging("brain")        # logs/brain.log when there is no console
     _load()
     apply_config(force=True)
     _roll_periods()
