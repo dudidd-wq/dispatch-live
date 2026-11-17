@@ -17,4 +17,4 @@ __pycache__/
 node_modules/
 .vscode/
 .idea/
-hayomyom.json
+/hayomyom.json
