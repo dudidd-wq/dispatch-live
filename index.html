@@ -1463,7 +1463,7 @@
     </div>
     <div class="brand-text">
       <div class="brand-title"><span class="live-dot" id="sysDot"></span>חדר <span style="color:var(--live)">מצב</span></div>
-      <div class="brand-sub" id="brandSub">DISPATCH LIVE · IL <b class="build-tag" title="גרסת הקבצים שרצה כרגע — אם אחרי עדכון המספר לא השתנה, מוגשת גרסה ישנה">v17.11-79</b></div>
+      <div class="brand-sub" id="brandSub">DISPATCH LIVE · IL <b class="build-tag" title="גרסת הקבצים שרצה כרגע — אם אחרי עדכון המספר לא השתנה, מוגשת גרסה ישנה">v17.11-80</b></div>
     </div>
   </div>
 
@@ -1716,27 +1716,52 @@ const LS_RAW = { set: Storage.prototype.setItem, rem: Storage.prototype.removeIt
   if (!CFG) return;
   const prefs = CFG.prefs || {};
   const writable = !!DL_CFG.writable;
-  for (const k of CFG_SYNC_KEYS) {
+  // Any other device (a phone on the Wi-Fi cannot write the file) follows the
+  // file for every setting it has not chosen for itself, so a new home address
+  // reaches every screen. A setting the device chose is marked as its own and
+  // left alone - including "automatic location", which is a removal.
+  // City and coordinates are one setting: a city picked on the phone with
+  // coordinates followed from the PC would put the home in two places.
+  const GROUP = { 'dl-city': 'home', 'dl-lat': 'home', 'dl-lng': 'home' };
+  const ownKey = k => 'dl-cfg-own:' + (GROUP[k] || k);
+  const isOwn = k => { try { return localStorage.getItem(ownKey(k)) === '1'; } catch { return false; } };
+  const markOwn = k => { try { LS_RAW.set.call(localStorage, ownKey(k), '1'); } catch {} };
+  const fileOf = k => prefs[k] == null ? null : String(prefs[k]);
+  if (writable) {
+    // On this computer the file is the truth.
+    for (const k of CFG_SYNC_KEYS) { try { if (fileOf(k) != null) LS_RAW.set.call(localStorage, k, fileOf(k)); } catch {} }
+  } else {
     try {
-      const fileV = prefs[k] == null ? null : String(prefs[k]);
-      // On this computer the file is the truth.
-      if (writable) { if (fileV != null) LS_RAW.set.call(localStorage, k, fileV); continue; }
-      // Any other device (a phone on the Wi-Fi cannot write the file) follows
-      // the file for every key it has not changed itself: we remember what we
-      // last gave it, and as long as its value is still that, it keeps
-      // following - so a new home address reaches every screen. A value the
-      // device chose for itself is left alone.
-      const cur = localStorage.getItem(k), rec = localStorage.getItem('dl-cfg-seed:' + k);
-      if (cur == null || rec == null || cur === rec) {
+      // 1) a value that differs from what we last gave this device (or, on the
+      //    first visit, from the file) was chosen here
+      for (const k of CFG_SYNC_KEYS) {
+        if (isOwn(k)) continue;
+        const cur = localStorage.getItem(k), rec = localStorage.getItem('dl-cfg-seed:' + k);
+        const differs = rec == null ? (cur != null && cur !== fileOf(k)) : cur !== rec;
+        if (differs) markOwn(k);
+      }
+      // 2) everything else follows the file, including the file clearing a value
+      for (const k of CFG_SYNC_KEYS) {
+        if (isOwn(k)) continue;
+        const fileV = fileOf(k);
         if (fileV != null) {
           LS_RAW.set.call(localStorage, k, fileV);
           LS_RAW.set.call(localStorage, 'dl-cfg-seed:' + k, fileV);
-        } else if (cur != null && cur === rec) {
+        } else {
           LS_RAW.rem.call(localStorage, k);
           LS_RAW.rem.call(localStorage, 'dl-cfg-seed:' + k);
         }
       }
     } catch {}
+    // from now on, any change made on this device is its own
+    Storage.prototype.setItem = function (k, v) {
+      LS_RAW.set.call(this, k, v);
+      if (this === localStorage && CFG_SYNC_KEYS.includes(k) && String(v) !== localStorage.getItem('dl-cfg-seed:' + k)) markOwn(k);
+    };
+    Storage.prototype.removeItem = function (k) {
+      LS_RAW.rem.call(this, k);
+      if (this === localStorage && CFG_SYNC_KEYS.includes(k)) markOwn(k);
+    };
   }
   if (!writable) {
     // v76 copied the owner's siren mute to every screen. Undo that once.
@@ -3226,12 +3251,15 @@ function handleAlertData(data) {
   const cities = hasAlert ? (data.data || data.cities || []) : [];
   const title = hasAlert ? (data.title || 'צבע אדום') : '';
   const desc = hasAlert ? (data.desc || '') : '';
-  const id = hasAlert ? (data.id || cities.join(',')) : null;
+  // Oref sends an id; without one, the localities stand in for it (marked
+  // 'syn:' so a quiet feed can clear it and the same towns alert again)
+  const id = hasAlert ? (data.id ? String(data.id) : 'syn:' + cities.join(',')) : null;
 
   const kind = hasAlert ? alertKind(data) : null;
   if (hasAlert && cities.length && kind !== 'attack') {
-    // not an attack: no siren, no takeover, no shelter countdown
-    state.lastAlertId = id;
+    // not an attack: no siren, no takeover, no shelter countdown. Remember it
+    // under a different key, so an attack that follows sounds again.
+    state.lastAlertId = 'notice:' + id;
     state.alertActive = false;
     // Oref announcing the end of the event for our area ends the protected stay
     if (kind === 'ended') {
@@ -3252,6 +3280,7 @@ function handleAlertData(data) {
     setAlertChrome(true, cities.length);
   } else {
     state.alertActive = false;
+    if (String(state.lastAlertId || '').includes('syn:')) state.lastAlertId = null;
     hideTakeover();
     setAlertChrome(false, 0);
   }
@@ -4705,6 +4734,8 @@ function renderHealthPanel() {
   body.innerHTML = `
     <h3>מקורות מידע · לפי הבקשות האחרונות של המסך</h3>
     ${srcRows ? `<table class="hl-table">${srcRows}</table>` : '<div class="sys-meta">עדיין לא נרשמו בקשות.</div>'}
+    ${(d.tlsUnverified || []).length ? `<h3>אבטחת חיבור</h3><div>${dot('stale')}לא ניתן היה לאמת את התעודה של: ${esc(d.tlsUnverified.join(' · '))}
+      <div class="set-help">החיבור נעשה בלי אימות כדי שהמקור ימשיך לעבוד. בדרך כלל הסיבה היא תעודת שורש שחסרה ב-Windows; פתיחת האתר פעם אחת ב-Edge מתקנת זאת לרוב.</div></div>` : ''}
     <h3>שירות התנועה</h3><div>${brainLine}</div>
     <h3>בדיקה עצמית · ${st.running ? 'רצה כעת…' : st.at ? agoHe(st.ago) : 'טרם רצה (רצה כדקה וחצי אחרי הפעלה, ואז פעם ביממה)'}</h3>
     <div class="set-help">בודקת שכל מקור עדיין מחזיר את המבנה שהמסך יודע לקרוא. שינוי באתר של מקור מתגלה כאן.</div>
@@ -4933,6 +4964,24 @@ async function postConfig(payload) {
   if (!d.ok) throw new Error(d.message || ('HTTP ' + r.status));
   return d;
 }
+// Pair custom entries across a save. An entry whose address is unchanged keeps
+// its id and needs nothing. Of the rest, a removed and an added entry are the
+// same entry edited when their name is unique on both sides, or when exactly
+// one was removed and one added. Anything else is genuinely new or gone - a
+// guess there would hand one entry's on/off state to another.
+function pairEdited(oldList, newList, key) {
+  const newKeys = new Set(newList.map(x => x[key])), oldKeys = new Set(oldList.map(x => x[key]));
+  const gone = oldList.filter(x => !newKeys.has(x[key])), fresh = newList.filter(x => !oldKeys.has(x[key]));
+  const once = (arr, n) => arr.filter(x => x.name === n).length === 1;
+  const map = {};
+  for (const g of gone) {
+    if (once(gone, g.name) && once(fresh, g.name)) map[g.id] = fresh.find(x => x.name === g.name).id;
+  }
+  const used = new Set(Object.values(map));
+  const leftG = gone.filter(g => !(g.id in map)), leftF = fresh.filter(f => !used.has(f.id));
+  if (leftG.length === 1 && leftF.length === 1) { map[leftG[0].id] = leftF[0].id; used.add(leftF[0].id); }
+  return { map, added: fresh.filter(f => !used.has(f.id)).map(f => f.id) };
+}
 // only what differs from the screen as it was opened
 function settingsDiff(base, now) {
   const out = {}, same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -4972,20 +5021,17 @@ $('setSave').addEventListener('click', async () => {
       const d = await postConfig({ patch });
       // An id is derived from the address. When the address of an existing
       // custom entry was edited its id changed: carry its on/off and featured
-      // state over (matched by name). A brand-new channel is switched on.
-      const before = new Set(CHANNELS.map(c => c.id));
-      const newCustom = d.config.channels.custom || [];
-      const moved = {};
-      for (const oc of CHANNELS.filter(c => c.custom)) {
-        const nc = newCustom.find(x => x.name === oc.name);
-        if (nc && nc.id !== oc.id) moved[oc.id] = nc.id;
-      }
-      const added = newCustom.map(c => c.id).filter(id => !before.has(id) && !Object.values(moved).includes(id));
+      // state over. A brand-new channel is switched on.
+      const ch = pairEdited(CHANNELS.filter(c => c.custom), d.config.channels.custom || [], 'src');
+      const fd = pairEdited(NEWS_SOURCES.filter(f => f.custom), d.config.news.custom || [], 'url');
       const fix = {};
       const tvWas = JSON.parse(now.prefs['dl-tv'] || '[]');
-      const tvNow = [...new Set([...tvWas.map(id => moved[id] || id), ...added])];
+      const tvNow = [...new Set([...tvWas.map(id => ch.map[id] || id), ...ch.added])];
       if (JSON.stringify(tvNow) !== JSON.stringify(tvWas)) fix['dl-tv'] = JSON.stringify(tvNow);
-      for (const k of ['dl-featured', 'dl-featured2']) if (moved[now.prefs[k]]) fix[k] = moved[now.prefs[k]];
+      for (const k of ['dl-featured', 'dl-featured2']) if (ch.map[now.prefs[k]]) fix[k] = ch.map[now.prefs[k]];
+      const offWas = JSON.parse(now.prefs['dl-news-off'] || '[]');
+      const offNow = offWas.map(id => fd.map[id] || id);
+      if (JSON.stringify(offNow) !== JSON.stringify(offWas)) fix['dl-news-off'] = JSON.stringify(offNow);
       if (Object.keys(fix).length) {
         Object.assign(prefs, fix);
         await postConfig({ patch: { prefs: fix } });
@@ -5036,7 +5082,7 @@ document.addEventListener('keydown', e => {
   if (!$('archiveOverlay').hidden) $('archiveOverlay').hidden = true;
 });
 
-const DL_BUILD = '17.11-79';
+const DL_BUILD = '17.11-80';
 console.log('%cDispatch LIVE build ' + DL_BUILD, 'color:#22d3ee;font-weight:bold');
 const TENSION_W = { alerts: 0.50, idf: 0.20, news: 0.30 };  // component weights
 const TENSION_BASELINE = 12;   // structural background level for Israel
@@ -5775,14 +5821,14 @@ setInterval(() => {
 // leak until the page went blank. A hard 4-hour cap forces a reload regardless.
 const BOOT_TIME = Date.now();
 const FULL_RELOAD_MS = 3 * 60 * 60 * 1000;       // target: reload after 3h
-const FULL_RELOAD_HARD_MS = 4 * 60 * 60 * 1000;  // hard cap: reload no matter what
 function maybeFullReload() {
   const up = Date.now() - BOOT_TIME;
   if (up < FULL_RELOAD_MS) return;
-  // Past the hard cap, reload even during an alert — staying up risks a blank page.
-  if (up >= FULL_RELOAD_HARD_MS) { location.reload(); return; }
-  // Otherwise defer only for an active alert (audio playing is fine to interrupt).
-  if (!state.alertActive) location.reload();
+  // Never during an alert or while the protected-stay countdown runs: a reload
+  // would wipe the countdown and silence the screen at the worst moment. The
+  // reload happens on the first quiet minute after it.
+  const busy = state.alertActive || _shelterTimer || $('takeover').classList.contains('show');
+  if (!busy) location.reload();
 }
 setInterval(maybeFullReload, 60 * 1000);
 

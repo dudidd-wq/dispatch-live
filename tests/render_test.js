@@ -202,15 +202,86 @@ const PORT = process.env.PORT || '3187';
       city = 'חיפה';                                   // the owner moves the home on the PC
       await phone.reload({ waitUntil: 'domcontentloaded' });
       const followed = await cityOf();
-      await phone.evaluate(() => localStorage.setItem('dl-city', 'אילת'));     // the phone picks its own city
+      await phone.evaluate(() => { localStorage.setItem('dl-lat', '29.557'); localStorage.setItem('dl-lng', '34.952');
+        localStorage.setItem('dl-city', 'אילת'); });     // the phone picks its own city (the picker sets all three)
       city = 'רחובות';
       await phone.reload({ waitUntil: 'domcontentloaded' });
       const own = await cityOf();
       console.log('read-only screen:', first, '->', followed, '-> own choice kept:', own);
       if (first !== 'חולון' || followed !== 'חיפה') fail('a read-only screen does not follow the owner (' + first + ', ' + followed + ')');
       if (own !== 'אילת') fail('a read-only screen lost its own choice (' + own + ')');
+      // its own city carries its own coordinates: the home is one setting
+      const coords = await phone.evaluate(() => localStorage.getItem('dl-lat'));
+      if (coords !== '29.557') fail('a read-only screen with its own city lost its own coordinates: ' + coords);
       await phone.context().close();
+
+      // "automatic location" chosen on the phone is a choice, not a gap to fill
+      const p3 = await (await browser.newContext()).newPage();
+      await p3.route('**/config', async r => {
+        const c = JSON.parse(JSON.stringify(cfg)); c.writable = false;
+        c.config.prefs['dl-city'] = 'חיפה'; c.config.prefs['dl-lat'] = '32.794'; c.config.prefs['dl-lng'] = '34.989';
+        r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(c) });
+      });
+      await p3.goto(base + '/', { waitUntil: 'domcontentloaded' });
+      await p3.evaluate(() => { localStorage.removeItem('dl-city'); localStorage.removeItem('dl-lat'); localStorage.removeItem('dl-lng'); });
+      await p3.reload({ waitUntil: 'domcontentloaded' });
+      const auto = await p3.evaluate(() => [localStorage.getItem('dl-city'), localStorage.getItem('dl-lat')]);
+      if (auto[0] !== null || auto[1] !== null) fail('a phone set to automatic location got the owner\'s home back: ' + auto);
+      await p3.context().close();
+
+      // a device that already had its own city before it ever saw the file keeps it
+      const p4 = await (await browser.newContext()).newPage();
+      await p4.addInitScript(() => { if (!localStorage.getItem('__seeded')) {
+        localStorage.setItem('__seeded', '1'); localStorage.setItem('dl-city', 'באר שבע');
+        localStorage.setItem('dl-lat', '31.252'); localStorage.setItem('dl-lng', '34.791'); } });
+      await p4.route('**/config', async r => {
+        const c = JSON.parse(JSON.stringify(cfg)); c.writable = false;
+        c.config.prefs['dl-city'] = 'חיפה'; c.config.prefs['dl-lat'] = '32.794'; c.config.prefs['dl-lng'] = '34.989';
+        r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(c) });
+      });
+      await p4.goto(base + '/', { waitUntil: 'domcontentloaded' });
+      const pre = await p4.evaluate(() => [localStorage.getItem('dl-city'), localStorage.getItem('dl-lat')]);
+      console.log('pre-existing own home kept:', pre.join(' '));
+      if (pre[0] !== 'באר שבע' || pre[1] !== '31.252') fail('the first load overwrote a device\'s own home: ' + pre);
+      await p4.context().close();
     }
+
+    // pairing custom entries across a save
+    const pairs = await page.evaluate(() => {
+      const ch = (id, name, src) => ({ id, name, src });
+      return [
+        pairEdited([ch('a', 'Cam', 'u1'), ch('b', 'Cam', 'u2')], [ch('a', 'Cam', 'u1'), ch('b', 'Cam', 'u2')], 'src'),   // nothing edited
+        pairEdited([ch('a', 'Cam', 'u1'), ch('b', 'Cam', 'u2')], [ch('a', 'Cam', 'u1'), ch('c', 'Cam', 'u3')], 'src'),   // one address edited
+        pairEdited([ch('a', 'A', 'u1')], [ch('x', 'A', 'u9'), ch('y', 'B', 'u8')], 'src'),                              // edit + add
+        pairEdited([ch('a', 'A', 'u1'), ch('b', 'B', 'u2')], [ch('x', 'C', 'u7'), ch('y', 'D', 'u8')], 'src'),           // ambiguous
+      ];
+    });
+    console.log('pairing:', JSON.stringify(pairs));
+    if (Object.keys(pairs[0].map).length || pairs[0].added.length) fail('unedited entries were re-mapped');
+    if (pairs[1].map.b !== 'c' || pairs[1].map.a) fail('a single address edit was not carried over');
+    if (pairs[2].map.a !== 'x' || pairs[2].added.join() !== 'y') fail('edit plus add mis-paired');
+    if (Object.keys(pairs[3].map).length) fail('an ambiguous edit was guessed');
+
+    // a message without an id still sounds again after an all-clear or a quiet spell
+    const resound = await page.evaluate(() => {
+      let n = 0; const orig = window.playSiren; window.playSiren = () => { n++; };
+      const atk = { cat: '1', title: 'ירי רקטות וטילים', data: ['שדרות'], desc: '' };
+      handleAlertData(atk); handleAlertData(atk);                                  // one siren, polled twice
+      handleAlertData({ cat: '10', title: 'האירוע הסתיים', data: ['שדרות'], desc: '' });
+      handleAlertData(atk);                                                        // a new attack, same towns
+      handleAlertData([]); handleAlertData(atk);                                   // quiet, then again
+      window.playSiren = orig; handleAlertData([]);
+      return n;
+    });
+    console.log('sirens for attack, attack(repeat), ended, attack, quiet, attack:', resound);
+    if (resound !== 3) fail('expected 3 sirens without ids, got ' + resound);
+
+    // no self-reload during an alert or a protected stay
+    const reloadGuard = await page.evaluate(() => {
+      const src = String(maybeFullReload);
+      return /alertActive/.test(src) && /_shelterTimer/.test(src) && !/HARD/.test(src);
+    });
+    if (!reloadGuard) fail('the periodic reload is not held back during an alert');
 
     // saving one change must not disturb stored ids the screen does not show
     await fetch('http://127.0.0.1:' + PORT + '/config', { method: 'POST', headers: { 'Content-Type': 'application/json' },

@@ -194,14 +194,15 @@ def sanitize(cfg):
         src = _text(c.get("src"), 600).strip()
         name = _text(c.get("name"), 40).strip()
         if name and src.lower().startswith(("http://", "https://")):
-            chans.append({"id": _stable_id("c", src), "name": name,
+            chans.append({"id": _stable_id("c", src), "name": name, "_raw": i,
                           "type": "iframe" if c.get("type") == "iframe" else "hls", "src": src})
     seen, uniq = set(), []
     for c in chans:                       # the same address twice is one channel
         if c["id"] not in seen:
             seen.add(c["id"]); uniq.append(c)
-    old_ch = {"custom%d" % (i + 1): c["id"] for i, c in enumerate(chans)}     # ids written by v76
-    chans = uniq
+    # v76 numbered entries by their position in the raw list, skipped ones included
+    old_ch = {"custom%d" % (c["_raw"] + 1): c["id"] for c in chans}
+    chans = [{k: v for k, v in c.items() if k != "_raw"} for c in uniq]
     out["channels"] = {"custom": chans}
 
     feeds = []
@@ -213,14 +214,14 @@ def sanitize(cfg):
         url = _text(c.get("url"), 600).strip()
         name = _text(c.get("name"), 40).strip()
         if name and url.lower().startswith(("http://", "https://")):
-            feeds.append({"id": _stable_id("f", url), "name": name, "url": url,
+            feeds.append({"id": _stable_id("f", url), "name": name, "url": url, "_raw": i,
                           "region": "world" if c.get("region") == "world" else "il"})
     seen, uniq = set(), []
     for f in feeds:
         if f["id"] not in seen:
             seen.add(f["id"]); uniq.append(f)
-    old_feed = {"cfeed%d" % (i + 1): f["id"] for i, f in enumerate(feeds)}
-    out["news"] = {"custom": uniq}
+    old_feed = {"cfeed%d" % (f["_raw"] + 1): f["id"] for f in feeds}
+    out["news"] = {"custom": [{k: v for k, v in f.items() if k != "_raw"} for f in uniq]}
 
     # v76 numbered custom entries by position (custom1, cfeed1). Carry any such
     # id still stored in the preferences over to the address-based id.

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ============================================================
 #   DISPATCH LIVE  -  Mac / Linux launcher
-#   Runs the local server (which opens the deck in your browser).
-#   Requires Python 3.7+  OR  Node.js 18+  (no other dependencies).
+#   Runs the deck server (which opens the deck in your browser) and the
+#   Traffic Brain next to it. Requires Python 3.9+ (no other dependencies).
 # ============================================================
 cd "$(dirname "$0")" || exit 1
 
@@ -22,25 +22,29 @@ if command -v lsof >/dev/null 2>&1; then
   fi
 fi
 
-# --- Prefer Python 3, fall back to Node ---
-if command -v python3 >/dev/null 2>&1; then
-  echo "  [OK] Engine: python3 server.py"
-  echo "  Starting... the deck will open in your browser shortly."
+PY=""
+for c in python3 python; do
+  if command -v "$c" >/dev/null 2>&1 && "$c" -c 'import sys; sys.exit(sys.version_info < (3, 9))' 2>/dev/null; then
+    PY="$c"; break
+  fi
+done
+if [ -z "$PY" ]; then
+  echo "  [!] Python 3.9 or newer was not found."
+  echo "      Install it from https://www.python.org/downloads/"
   echo ""
-  exec python3 server.py
-elif command -v python >/dev/null 2>&1; then
-  echo "  [OK] Engine: python server.py"
-  exec python server.py
-elif command -v node >/dev/null 2>&1; then
-  echo "  [OK] Engine: node server.js"
-  exec node server.js
-else
-  echo "  [!] Neither Python 3 nor Node.js was found."
-  echo ""
-  echo "  Install ONE of these (both are free):"
-  echo "    - Python:  https://www.python.org/downloads/"
-  echo "    - Node.js: https://nodejs.org"
-  echo ""
-  read -p "  Press Enter to close..."
+  read -r -p "  Press Enter to close..."
   exit 1
 fi
+
+# --- Traffic Brain (port 3200), stopped together with the deck ---
+BRAIN=""
+if [ -f brain.py ] && ! (command -v lsof >/dev/null 2>&1 && lsof -ti tcp:3200 >/dev/null 2>&1); then
+  "$PY" brain.py >/dev/null 2>&1 &
+  BRAIN=$!
+fi
+trap '[ -n "$BRAIN" ] && kill "$BRAIN" 2>/dev/null' EXIT INT TERM
+
+echo "  [OK] Engine: $PY server.py"
+echo "  Starting... the deck will open in your browser shortly."
+echo ""
+"$PY" server.py

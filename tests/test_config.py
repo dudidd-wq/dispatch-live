@@ -190,3 +190,16 @@ class TestIdsFromOlderFiles(Tmp):
         self.write("config.local.json", {"channels": {"custom": [{"name": "A", "src": "https://x.test/a.m3u8"},
                                                                   {"name": "A again", "src": "https://x.test/a.m3u8"}]}})
         self.assertEqual(len(dlconfig.load()["channels"]["custom"]), 1)
+
+
+class TestV76IdsWithSkippedEntries(Tmp):
+    def test_ids_follow_the_raw_list_position(self):
+        # v76 counted every list position, including entries it skipped as invalid
+        self.write("config.local.json", {
+            "channels": {"custom": [{"name": "", "src": "bad"}, {"name": "B", "src": "https://x.test/b.m3u8"}]},
+            "prefs": {"dl-tv": '["custom2"]', "dl-featured": "custom2"}})
+        c = dlconfig.load()
+        b_id = c["channels"]["custom"][0]["id"]
+        self.assertEqual(json.loads(c["prefs"]["dl-tv"]), [b_id])
+        self.assertEqual(c["prefs"]["dl-featured"], b_id)
+        self.assertNotIn("_raw", c["channels"]["custom"][0])

@@ -24,11 +24,12 @@ echo  --------------------------------------------------
 powershell -NoProfile -Command "$p = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'DispatchDeckProfile' }; if ($p) { $p | ForEach-Object { 'PID ' + $_.ProcessId + '  ' + $_.Name } } else { '    (none - no Dispatch app windows open)' }"
 echo.
 
-echo  [3] All python/node processes (may include other apps):
+echo  [3] All Python processes (may include other apps):
 echo  --------------------------------------------------
 tasklist /FI "IMAGENAME eq python.exe" /FO TABLE /NH 2>nul | findstr /R "." || echo     (no python.exe)
 tasklist /FI "IMAGENAME eq py.exe" /FO TABLE /NH 2>nul | findstr /R "." || echo     (no py.exe)
-tasklist /FI "IMAGENAME eq node.exe" /FO TABLE /NH 2>nul | findstr /R "." || echo     (no node.exe)
+tasklist /FI "IMAGENAME eq pythonw.exe" /FO TABLE /NH 2>nul | findstr /R "." || echo     (no pythonw.exe - background mode is not running)
+tasklist /FI "IMAGENAME eq pyw.exe" /FO TABLE /NH 2>nul | findstr /R "." || echo     (no pyw.exe)
 echo.
 
 echo  --------------------------------------------------

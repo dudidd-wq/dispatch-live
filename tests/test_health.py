@@ -191,7 +191,44 @@ class TestFetchersDoNotPassOffOldData(unittest.TestCase):
         server._health.clear()
 
 
-class TestProxyHops(unittest.TestCase):
+class _InternetStandIn(unittest.TestCase):
+    """setUp/tearDown and a fake resolver shared by the /fetch tests."""
+
+    def setUp(self):
+        self._gai, self._conn = server.socket.getaddrinfo, server._pinned_connection
+        self._getproxies = server.urllib.request.getproxies
+        server.urllib.request.getproxies = lambda: {}          # these tests exercise the direct path
+        self.resolutions = []
+
+    def tearDown(self):
+        server.socket.getaddrinfo, server._pinned_connection = self._gai, self._conn
+        server.urllib.request.getproxies = self._getproxies
+
+    def _internet(self, answers):
+        """public.test 'resolves' to a public address; connections to that
+        address are delivered to the local stand-in server."""
+        import socket
+        real_conn, port, test = self._conn, self.port, self
+
+        real_gai = self._gai
+
+        def gai(host, p, *a, **k):
+            try:
+                __import__("ipaddress").ip_address(str(host).strip("[]"))
+                return real_gai(host, p, *a, **k)          # a literal address: nothing to resolve
+            except ValueError:
+                pass
+            test.resolutions.append(host)
+            ip = answers(host, len(test.resolutions))
+            if ip is None:
+                raise socket.gaierror("name not known")
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, p))]
+        server.socket.getaddrinfo = gai
+        server._pinned_connection = lambda scheme, host, p, ip, timeout, ctx=None: real_conn(
+            scheme, host, p, "127.0.0.1" if ip == "93.184.216.34" else ip, timeout)
+
+
+class TestProxyHops(_InternetStandIn):
     """The /fetch proxy against a local web server standing in for the internet."""
 
     @classmethod
@@ -223,16 +260,6 @@ class TestProxyHops(unittest.TestCase):
     def tearDownClass(cls):
         cls.httpd.shutdown()
 
-    def setUp(self):
-        self._gai, self._conn = server.socket.getaddrinfo, server._pinned_connection
-        self._getproxies = server.urllib.request.getproxies
-        server.urllib.request.getproxies = lambda: {}          # these tests exercise the direct path
-        self.resolutions = []
-
-    def tearDown(self):
-        server.socket.getaddrinfo, server._pinned_connection = self._gai, self._conn
-        server.urllib.request.getproxies = self._getproxies
-
     def test_behind_a_proxy_every_hop_is_still_checked(self):
         server.urllib.request.getproxies = self._getproxies
         self.assertFalse(server._hop_allowed("http://127.0.0.1:3100/config"))
@@ -240,29 +267,6 @@ class TestProxyHops(unittest.TestCase):
         self.assertFalse(server._hop_allowed("file:///etc/passwd"))
         server.urllib.request.getproxies = lambda: {"http": "http://127.0.0.1:9", "https": "http://127.0.0.1:9"}
         self.assertEqual(server.fetch_public("http://127.0.0.1:3100/config")[1], 400)
-
-    def _internet(self, answers):
-        """public.test 'resolves' to a public address; connections to that
-        address are delivered to the local stand-in server."""
-        import socket
-        real_conn, port, test = self._conn, self.port, self
-
-        real_gai = self._gai
-
-        def gai(host, p, *a, **k):
-            try:
-                __import__("ipaddress").ip_address(str(host).strip("[]"))
-                return real_gai(host, p, *a, **k)          # a literal address: nothing to resolve
-            except ValueError:
-                pass
-            test.resolutions.append(host)
-            ip = answers(host, len(test.resolutions))
-            if ip is None:
-                raise socket.gaierror("name not known")
-            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, p))]
-        server.socket.getaddrinfo = gai
-        server._pinned_connection = lambda scheme, host, p, ip, timeout: real_conn(
-            scheme, host, p, "127.0.0.1" if ip == "93.184.216.34" else ip, timeout)
 
     def test_a_public_page_and_a_same_site_redirect_work(self):
         self._internet(lambda h, n: "93.184.216.34")
@@ -292,7 +296,7 @@ class TestProxyHops(unittest.TestCase):
             return real_gai(host, p, *a, **k)
         server.socket.getaddrinfo = gai
         # .99 is dead (nothing listens on the port it is mapped to); .34 is the stand-in server
-        server._pinned_connection = lambda scheme, host, p, ip, timeout: real_conn(
+        server._pinned_connection = lambda scheme, host, p, ip, timeout, ctx=None: real_conn(
             scheme, host, p if ip == "93.184.216.34" else 9, "127.0.0.1", timeout)
         self.assertEqual(server.fetch_public("http://public.test:%d/page" % port), (True, 200, "<rss>ok</rss>"))
 
@@ -337,3 +341,141 @@ class TestStateRelayGuards(unittest.TestCase):
         self.assertTrue(server._same_origin(H("192.168.1.5:3100", "http://192.168.1.5:3100")))
         self.assertFalse(server._same_origin(H("192.168.1.5:3100", "http://192.168.1.5:8080")))
         self.assertFalse(server._same_origin(H("localhost:3100", "null")))
+
+
+class TestHealthTableIsOurs(unittest.TestCase):
+    def setUp(self):
+        server._health.clear()
+
+    def tearDown(self):
+        server._health.clear()
+
+    def test_only_hosts_the_deck_uses_get_a_row(self):
+        from urllib.parse import quote
+        k = server._health_key("/fetch", "url=" + quote("https://www.ynet.co.il/Integration/StoryRss2.xml"))
+        self.assertEqual(k[0], "feed:ynet.co.il")
+        for junk in ("ftp://x", "http://h1.example/", "https://attacker.test/a", "http://no-such-host.invalid/"):
+            self.assertIsNone(server._health_key("/fetch", "url=" + quote(junk)), junk)
+
+    def test_a_full_table_makes_room_but_never_drops_a_critical_source(self):
+        server.health_note("oref_alerts", "A", True, 1, critical=True)
+        for i in range(200):
+            server.health_note("feed:h%d" % i, "x", False, 1, "e")
+        self.assertIn("oref_alerts", server._health)
+        self.assertLessEqual(len(server._health), 80)
+        server.health_note("oref_history", "H", True, 1, critical=True)     # a critical newcomer still gets in
+        self.assertIn("oref_history", server._health)
+
+
+class TestFetchLimits(_InternetStandIn):
+    """Time, size and shape limits on /fetch, against a hostile local server."""
+
+    @classmethod
+    def setUpClass(cls):
+        import http.server, threading, gzip, time as _t
+
+        class H(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+            def log_message(self, *a): pass
+            def _send(self, body, extra=()):
+                self.send_response(200)
+                for k, v in extra: self.send_header(k, v)
+                self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+            def do_GET(self):
+                if self.path == "/bomb":
+                    self._send(gzip.compress(b"\0" * (60 * 1024 * 1024)), [("Content-Encoding", "gzip")])
+                elif self.path == "/gz":
+                    self._send(gzip.compress("<rss>שלום</rss>".encode()), [("Content-Encoding", "gzip"), ("Content-Type", "text/xml; charset=utf-8")])
+                elif self.path == "/trickle":
+                    self.send_response(200); self.send_header("Content-Length", "100"); self.end_headers()
+                    for _ in range(100):
+                        try:
+                            self.wfile.write(b"x"); self.wfile.flush(); _t.sleep(0.5)
+                        except Exception:
+                            return
+                elif self.path == "/feed;jsessionid=abc?x=1":
+                    self._send(b"<rss>params kept</rss>")
+                elif self.path == "/challenge":
+                    self._send(b"<html><head><title>Just a moment...</title></head><body>challenge-platform</body></html>")
+                else:
+                    self._send(("<rss>%s</rss>" % self.path).encode())
+        cls.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+        cls.port = cls.httpd.server_address[1]
+        threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
+
+    def _url(self, path):
+        self._internet(lambda h, n: "93.184.216.34")
+        return "http://public.test:%d%s" % (self.port, path)
+
+    def test_a_decompression_bomb_is_refused_without_inflating_it(self):
+        ok, st, txt = server.fetch_public(self._url("/bomb"))
+        self.assertEqual((ok, st), (False, 502)); self.assertIn("expands", txt)
+
+    def test_gzip_feeds_still_work(self):
+        self.assertEqual(server.fetch_public(self._url("/gz"))[2], "<rss>שלום</rss>")
+
+    def test_a_trickling_server_cannot_hold_a_thread_past_the_deadline(self):
+        import time
+        old = server.FETCH_DEADLINE
+        try:
+            server.FETCH_DEADLINE = 3
+            t0 = time.time()
+            ok, st, txt = server.fetch_public(self._url("/trickle"))
+            self.assertLess(time.time() - t0, 6)
+            self.assertFalse(ok); self.assertIn("longer", txt)
+        finally:
+            server.FETCH_DEADLINE = old
+
+    def test_path_parameters_are_sent_as_written(self):
+        self.assertEqual(server.fetch_public(self._url("/feed;jsessionid=abc?x=1"))[2], "<rss>params kept</rss>")
+
+    def test_a_bot_protection_page_is_a_failure_not_the_feed(self):
+        ok, st, txt = server.fetch_public(self._url("/challenge"))
+        self.assertEqual((ok, st), (False, 502)); self.assertIn("bot-protection", txt)
+
+
+class TestCertificates(unittest.TestCase):
+    def test_certificates_are_verified_by_default(self):
+        import ssl
+        self.assertEqual(server._SSL_CTX.verify_mode, ssl.CERT_REQUIRED)
+        self.assertTrue(server._SSL_CTX.check_hostname)
+        import brain
+        self.assertEqual(brain._SSL.verify_mode, ssl.CERT_REQUIRED)       # the Google key is never sent unverified
+
+    def test_an_unverifiable_certificate_is_retried_once_and_recorded(self):
+        import ssl, urllib.error
+        calls = []
+        real = server.urlopen
+        def fake(req, timeout=None, context=None):
+            calls.append(context)
+            if context is server._SSL_CTX:
+                raise urllib.error.URLError(ssl.SSLCertVerificationError("certificate verify failed"))
+            class R:
+                status = 200
+                def __enter__(s): return s
+                def __exit__(s, *a): return False
+            return R()
+        server.urlopen = fake
+        server._tls_unverified.clear()
+        try:
+            server.open_url(server.Request("https://feed.example/rss"), 5)
+        finally:
+            server.urlopen = real
+        self.assertEqual(calls, [server._SSL_CTX, server._SSL_LOOSE])
+        self.assertIn("feed.example", server._tls_unverified)
+        self.assertIn("feed.example", server.health_snapshot()["tlsUnverified"])
+        server._tls_unverified.clear()
+
+    def test_other_errors_are_not_retried_unverified(self):
+        import urllib.error
+        calls = []
+        real = server.urlopen
+        def fake(req, timeout=None, context=None):
+            calls.append(context); raise urllib.error.URLError("connection refused")
+        server.urlopen = fake
+        try:
+            with self.assertRaises(urllib.error.URLError):
+                server.open_url(server.Request("https://feed.example/rss"), 5)
+        finally:
+            server.urlopen = real
+        self.assertEqual(calls, [server._SSL_CTX])

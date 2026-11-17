@@ -10,13 +10,12 @@ echo    DISPATCH LIVE  -  TV + News + Red Alerts
 echo  ==================================================
 echo.
 
-REM --- Prefer Python; fall back to Node. Either runs the same app. ---
+REM --- Find Python (3.9 or newer). ---
 set "RUN="
 py -3 -c "pass" >nul 2>nul && set "RUN=py -3 server.py"
 if not defined RUN py -c "pass" >nul 2>nul && set "RUN=py server.py"
 if not defined RUN python -c "pass" >nul 2>nul && set "RUN=python server.py"
 if not defined RUN python3 -c "pass" >nul 2>nul && set "RUN=python3 server.py"
-if not defined RUN where node >nul 2>nul && set "RUN=node server.js"
 if not defined RUN goto noengine
 
 echo  [OK] Engine: !RUN!
@@ -68,6 +67,8 @@ echo.
 REM --- Run the server. It opens the browser itself once it's listening. ---
 REM     Closing this window stops the app.
 !RUN!
+REM keep the server's exit code: the commands below overwrite errorlevel
+set "SRVEXIT=!errorlevel!"
 
 REM The deck has stopped - take the Traffic Brain down with it.
 echo.
@@ -78,20 +79,19 @@ if defined BRAINPID taskkill /PID !BRAINPID! /F >nul 2>nul
 taskkill /FI "WINDOWTITLE eq Traffic Brain*" /F >nul 2>nul
 
 REM Clean exit (deck window closed) - close this console immediately.
-if "!errorlevel!"=="0" exit
+if "!SRVEXIT!"=="0" exit
 
 echo.
-echo  Server stopped with an error (code !errorlevel!).
+echo  Server stopped with an error (code !SRVEXIT!).
 echo  Press any key to close.
 pause >nul
 exit /b
 
 :noengine
-echo  [!] Neither Python nor Node.js was found.
+echo  [!] Python was not found.
 echo.
-echo  Install ONE of these (both are free):
-echo     Python:  https://www.python.org/downloads/  (tick Add to PATH)
-echo     Node.js: https://nodejs.org
+echo  Install Python (free):  https://www.python.org/downloads/
+echo  During setup tick "Add python.exe to PATH".
 echo.
 echo  Then run this file again.
 echo.

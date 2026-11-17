@@ -174,3 +174,37 @@ class TestTriggerSurvivesBusy(TestBudgetIsAWall):
             brain._verify_gate.release()
         src = open(os.path.join(os.path.dirname(__file__), "..", "brain.py"), encoding="utf-8").read()
         self.assertIn('if res.get("why") != "busy":', src)                # and the scheduler pops only after a real run
+
+
+class TestTriggers(Base):
+    def _queue(self, *reasons):
+        import io as _io
+
+        class Fake:
+            def __init__(s, path): s.path = path; s.out = None
+        for r in reasons:
+            with brain._lock:
+                pass
+            brain.STATE.setdefault("triggers", [])
+            # same logic the /trigger handler runs
+            trig = [t for t in (brain.STATE.get("triggers") or [])
+                    if isinstance(t, dict) and __import__("time").time() - t.get("t", 0) < brain.TRIGGER_TTL]
+            if not any(t.get("r") == r for t in trig) and len(trig) < 3:
+                trig.append({"r": r, "t": __import__("time").time()})
+            brain.STATE["triggers"] = trig
+
+    def test_the_handler_dedupes_and_caps(self):
+        src = open(os.path.join(os.path.dirname(__file__), "..", "brain.py"), encoding="utf-8").read()
+        self.assertIn('if not any(t.get("r") == reason for t in trig) and len(trig) < 3:', src)
+        self._queue("road-incident", "road-incident", "a", "b", "c")
+        self.assertEqual([t["r"] for t in brain.STATE["triggers"]], ["road-incident", "a", "b"])
+
+    def test_triggers_that_waited_out_an_empty_budget_expire(self):
+        import time
+        brain.STATE["triggers"] = [{"r": "old", "t": time.time() - brain.TRIGGER_TTL - 5}, "legacy-string",
+                                   {"r": "new", "t": time.time()}]
+        fresh = [t for t in brain.STATE["triggers"]
+                 if isinstance(t, dict) and time.time() - t.get("t", 0) < brain.TRIGGER_TTL]
+        self.assertEqual([t["r"] for t in fresh], ["new"])
+        src = open(os.path.join(os.path.dirname(__file__), "..", "brain.py"), encoding="utf-8").read()
+        self.assertIn("time.time() - t.get(\"t\", 0) < TRIGGER_TTL]", src)

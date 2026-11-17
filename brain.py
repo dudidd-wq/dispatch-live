@@ -37,9 +37,9 @@ DATA = os.path.join(ROOT, "data")
 MODEL_PATH = os.path.join(DATA, "model.json")
 STATE_PATH = os.path.join(DATA, "state.json")
 
+# Verified, always. The API key travels in a header of every request: an
+# unverified connection would hand it to anyone on the path.
 _SSL = ssl.create_default_context()
-_SSL.check_hostname = False
-_SSL.verify_mode = ssl.CERT_NONE
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
@@ -84,6 +84,7 @@ MONTHLY_CAP = 4500          # hard stop, well inside the free 5,000
 DAILY_CAP = 200             # stops a bad day from eating the month
 TRIGGER_BATCH = 6           # an incident measures the core, not the country
 TRIGGER_RESERVE = 900       # kept aside so incidents never starve the schedule
+TRIGGER_TTL = 30 * 60       # an incident not measured within 30 minutes is history
 FRESH_MIN = 25              # מדידה נחשבת "עכשיו" עד גיל זה
 
 # ---------------------------------------------------------------- model
@@ -469,7 +470,9 @@ def _note_failure(e):
             401: "key rejected",
             403: "key rejected, Routes API not enabled, or billing off",
             429: "Google daily quota reached"}.get(code, "network or Google error")
-    if "API key not valid" in msg or "API_KEY_INVALID" in msg:
+    if "CERTIFICATE_VERIFY_FAILED" in msg or "certificate verify failed" in msg.lower():
+        hint = "Google's certificate could not be verified on this PC (proxy or missing root certificate)"
+    elif "API key not valid" in msg or "API_KEY_INVALID" in msg:
         hint = "google.key holds a key Google does not accept (deleted or regenerated?)"
     elif "expired" in msg.lower():
         hint = "the API key has expired"
@@ -477,7 +480,8 @@ def _note_failure(e):
         hint = "Routes API is not enabled on the Google Cloud project"
     elif "billing" in msg.lower():
         hint = "billing is not active on the Google Cloud project"
-    he = ("המפתח ב-google.key לא מתקבל ב-Google (נמחק או הוחלף?)" if "google.key holds" in hint else
+    he = ("לא ניתן לאמת את התעודה של Google במחשב הזה" if "certificate" in hint else
+          "המפתח ב-google.key לא מתקבל ב-Google (נמחק או הוחלף?)" if "google.key holds" in hint else
           "תוקף המפתח פג" if "expired" in hint else
           "Routes API לא מופעל בפרויקט ב-Google Cloud" if "not enabled on" in hint else
           "החיוב לא פעיל בפרויקט ב-Google Cloud" if "billing is not" in hint else
@@ -636,14 +640,21 @@ def scheduler():
             if not api_key():
                 continue
             with _lock:
-                pending = STATE.get("triggers") or []
+                # An incident trigger is about NOW. One that waited out an
+                # empty budget (or an older version's plain-string entries)
+                # is history, and measuring it later spends money on nothing.
+                fresh = [t for t in (STATE.get("triggers") or [])
+                         if isinstance(t, dict) and time.time() - t.get("t", 0) < TRIGGER_TTL]
+                if fresh != STATE.get("triggers"):
+                    STATE["triggers"] = fresh
+                pending = fresh
                 last = STATE.get("lastVerify", 0)
                 enough = budget_left(scheduled=not pending) >= batch_size()
             if not enough:
                 continue
             # a trigger means the model is probably wrong right now
             if pending:
-                reason = pending[0]
+                reason = pending[0]["r"]
                 # A closure in Gush Dan is no reason to re-measure Beer
                 # Sheva. Sweeping all 14 on every trigger was unbudgeted and
                 # could push the month past the free 5,000 on its own.
@@ -651,7 +662,7 @@ def scheduler():
                 if res.get("why") != "busy":          # busy: keep the trigger for the next tick
                     with _lock:
                         cur = STATE.get("triggers") or []
-                        if cur and cur[0] == reason:
+                        if cur and isinstance(cur[0], dict) and cur[0].get("r") == reason:
                             STATE["triggers"] = cur[1:]
                 continue
             if (time.time() - last) / 60.0 >= verify_interval_min():
@@ -782,10 +793,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             for part in query.split("&"):
                 if part.startswith("reason="):
                     reason = urllib.parse.unquote(part[7:])
+            reason = reason[:60]
             with _lock:
-                trig = STATE.get("triggers") or []
-                if len(trig) < 5:
-                    trig.append(reason)
+                trig = [t for t in (STATE.get("triggers") or [])
+                        if isinstance(t, dict) and time.time() - t.get("t", 0) < TRIGGER_TTL]
+                # the same incident reported again is still one incident
+                if not any(t.get("r") == reason for t in trig) and len(trig) < 3:
+                    trig.append({"r": reason, "t": time.time()})
                 STATE["triggers"] = trig
                 _save()
             self._send({"ok": True, "queued": reason})

@@ -243,9 +243,49 @@ MIME = {
 # so a browser holding a keep-alive open longer than the timeout gets torn
 # down mid-session. Outbound calls carry their own explicit timeouts instead.
 
+# Certificates are verified. Until v80 verification was off for every source,
+# so any device on the path (a compromised router, a hostile hotspot) could
+# have answered "no alert" in Oref's name.
+# If a site's certificate cannot be verified on this PC (on Windows, Python
+# reads the Windows certificate store, which can lack a root the browser
+# would fetch on demand), the request is retried once WITHOUT verification so
+# the feed keeps working - and that is recorded and shown in the health panel
+# as "certificate not verified", never hidden.
 _SSL_CTX = ssl.create_default_context()
-_SSL_CTX.check_hostname = False
-_SSL_CTX.verify_mode = ssl.CERT_NONE
+_SSL_LOOSE = ssl.create_default_context()
+_SSL_LOOSE.check_hostname = False
+_SSL_LOOSE.verify_mode = ssl.CERT_NONE
+_tls_unverified = {}          # host -> (when, reason) of the last unverified fallback
+
+
+def _is_cert_error(e):
+    r = getattr(e, "reason", None)
+    return (isinstance(e, ssl.SSLCertVerificationError) or isinstance(r, ssl.SSLCertVerificationError)
+            or "CERTIFICATE_VERIFY_FAILED" in str(e))
+
+
+def _note_unverified(host, e):
+    first = host not in _tls_unverified
+    if len(_tls_unverified) < 50 or not first:
+        _tls_unverified[host] = (time.time(), str(e)[:120])
+    if first:
+        try:
+            print("  [!] TLS certificate of %s could not be verified - using it unverified (see /health)" % host)
+        except Exception:
+            pass
+
+
+def open_url(req, timeout):
+    """urlopen with a verified certificate, or - when only the certificate
+    check fails - once more without it, recorded in _tls_unverified."""
+    try:
+        return urlopen(req, timeout=timeout, context=_SSL_CTX)
+    except Exception as e:
+        if not _is_cert_error(e):
+            raise
+        url = req.full_url if hasattr(req, "full_url") else str(req)
+        _note_unverified(urlparse(url).hostname or "?", e)
+        return urlopen(req, timeout=timeout, context=_SSL_LOOSE)
 
 
 def _decompress(raw, encoding):
@@ -289,7 +329,7 @@ def fetch_upstream(target):
     """Fetch a URL server-side and return (ok, status, text)."""
     req = Request(target, headers=BROWSER_HEADERS)
     try:
-        with urlopen(req, timeout=TIMEOUT, context=_SSL_CTX) as resp:
+        with open_url(req, TIMEOUT) as resp:
             raw = resp.read()
             raw = _decompress(raw, (resp.headers.get("Content-Encoding") or "").lower())
             text = _to_utf8_text(raw, resp.headers.get("Content-Type") or "")
@@ -405,7 +445,7 @@ def fetch_oref(url):
     result = (False, 502, '{"error":"oref fetch failed"}')
     req = Request(url, headers=OREF_HEADERS)
     try:
-        with urlopen(req, timeout=12, context=_SSL_CTX) as resp:
+        with open_url(req, 12) as resp:
             raw = resp.read()
             raw = _decompress(raw, (resp.headers.get("Content-Encoding") or "").lower())
             text = _decode_feed(raw)
@@ -1462,7 +1502,7 @@ def fetch_logo(sid):
     url = "https://www.google.com/s2/favicons?domain=%s&sz=64" % dom
     try:
         req = urllib.request.Request(url, headers={"User-Agent": BROWSER_HEADERS["User-Agent"]})
-        with urllib.request.urlopen(req, timeout=10, context=_SSL_CTX) as r:
+        with open_url(req, 10) as r:
             data = r.read()
         if len(data) < 40:
             return None
@@ -1917,22 +1957,86 @@ def _public_target(url):
         return False
 
 
-def _pinned_connection(scheme, host, port, ip, timeout):
+def _pinned_connection(scheme, host, port, ip, timeout, ctx=None):
     """A connection that goes to the address we validated - not to whatever
     the name resolves to a moment later (DNS rebinding)."""
     import http.client
+    ctx = ctx or _SSL_CTX
 
     if scheme == "https":
         class Conn(http.client.HTTPSConnection):
             def connect(self):
                 sock = socket.create_connection((ip, self.port), self.timeout)
-                self.sock = _SSL_CTX.wrap_socket(sock, server_hostname=self.host)
-        return Conn(host, port, timeout=timeout, context=_SSL_CTX)
+                try:
+                    self.sock = ctx.wrap_socket(sock, server_hostname=self.host)
+                except Exception:
+                    sock.close()
+                    raise
+        return Conn(host, port, timeout=timeout, context=ctx)
 
     class Conn(http.client.HTTPConnection):
         def connect(self):
             self.sock = socket.create_connection((ip, self.port), self.timeout)
     return Conn(host, port, timeout=timeout)
+
+
+FETCH_DEADLINE = 25              # seconds for the whole fetch, redirects and body included
+FETCH_MAX_WIRE = 6 * 1024 * 1024     # bytes as sent
+FETCH_MAX_BODY = 10 * 1024 * 1024    # bytes after decompression
+
+# A 200 "checking your browser" page is not the feed. Treating it as the feed
+# would also store it as the source's last good answer.
+_BLOCK_PAGE = re.compile(r"<title>\s*(Just a moment|Attention Required|Access denied|Please Wait\b)"
+                         r"|challenge-platform|cf-browser-verification|captcha-delivery", re.I)
+
+
+class _FetchLimit(Exception):
+    pass
+
+
+def _read_limited(resp, deadline, set_timeout=None):
+    """Read a response body within the deadline and the size limits, and
+    decompress it as it streams so a small gzip cannot expand without bound."""
+    enc = (resp.getheader("Content-Encoding") or "").lower().strip()
+    # 32 + MAX_WBITS: accept a gzip or a zlib header, whichever the server sent
+    dec = zlib.decompressobj(32 + zlib.MAX_WBITS) if enc in ("gzip", "x-gzip", "deflate") else None
+    wire, out, size = 0, [], 0
+    while True:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise _FetchLimit("took longer than %d s" % FETCH_DEADLINE)
+        if set_timeout:
+            set_timeout(max(0.5, min(left, TIMEOUT)))
+        chunk = resp.read1(65536)
+        if not chunk:
+            break
+        wire += len(chunk)
+        if wire > FETCH_MAX_WIRE:
+            raise _FetchLimit("response too large")
+        if dec is not None:
+            try:
+                chunk = dec.decompress(chunk, FETCH_MAX_BODY - size + 1)
+            except zlib.error:
+                raise _FetchLimit("corrupt %s body" % enc)
+            if dec.unconsumed_tail:
+                raise _FetchLimit("response expands too much")
+        size += len(chunk)
+        if size > FETCH_MAX_BODY:
+            raise _FetchLimit("response expands too much")
+        out.append(chunk)
+    if dec is not None:
+        tail = dec.flush()
+        if size + len(tail) > FETCH_MAX_BODY:
+            raise _FetchLimit("response expands too much")
+        out.append(tail)
+    return b"".join(out)
+
+
+def _body_text(raw, resp):
+    text = _to_utf8_text(raw, resp.getheader("Content-Type") or "")
+    if _BLOCK_PAGE.search(text[:20000]):
+        raise _FetchLimit("the site answered with a bot-protection page, not the feed")
+    return text
 
 
 def _hop_allowed(url):
@@ -1962,14 +2066,26 @@ def _fetch_via_proxy(target, max_hops, max_bytes):
 
     if not _hop_allowed(target):
         return False, 400, "Only public web addresses can be fetched"
-    opener = urllib.request.build_opener(Hops, urllib.request.HTTPSHandler(context=_SSL_CTX))
-    try:
+    deadline = time.monotonic() + FETCH_DEADLINE
+
+    def attempt(ctx):
+        opener = urllib.request.build_opener(Hops, urllib.request.HTTPSHandler(context=ctx))
         with opener.open(Request(target, headers=BROWSER_HEADERS), timeout=TIMEOUT) as resp:
-            raw = resp.read(max_bytes + 1)
-            if len(raw) > max_bytes:
-                return False, 502, "Upstream fetch failed: response too large"
-            raw = _decompress(raw, (resp.headers.get("Content-Encoding") or "").lower())
-            return True, resp.status, _to_utf8_text(raw, resp.headers.get("Content-Type") or "")
+            def set_timeout(t):
+                try:
+                    resp.fp.raw._sock.settimeout(t)
+                except Exception:
+                    pass
+            raw = _read_limited(resp, deadline, set_timeout)
+            return True, resp.status, _body_text(raw, resp)
+    try:
+        try:
+            return attempt(_SSL_CTX)
+        except Exception as e:
+            if not _is_cert_error(e):
+                raise
+            _note_unverified(urlparse(target).hostname or "?", e)
+            return attempt(_SSL_LOOSE)
     except _NotPublic:
         return False, 400, "Only public web addresses can be fetched"
     except Exception as e:
@@ -1982,16 +2098,20 @@ def fetch_public(target, max_hops=5, max_bytes=6 * 1024 * 1024):
     public address, and connected to at exactly that address. A redirect to
     this machine or the home network is refused. status 400 = refused target,
     502 = ordinary upstream failure (including "the name does not resolve")."""
-    from urllib.parse import urljoin
+    from urllib.parse import urljoin, urlsplit
     url = target
+    deadline = time.monotonic() + FETCH_DEADLINE
     try:
-        scheme = urlparse(target).scheme
-        if scheme in ("http", "https") and urllib.request.getproxies().get(scheme):
-            # This machine reaches the web through a proxy. A direct pinned
-            # connection would bypass it (and usually fail), so go through the
-            # proxy and validate every hop's address instead.
+        px = urllib.request.getproxies()
+        if px.get("http") or px.get("https"):
+            # This machine reaches the web through a proxy (for one scheme or
+            # both). A direct pinned connection would bypass it, and a redirect
+            # could switch scheme, so the whole fetch goes the proxy way, with
+            # every hop's address still checked.
             return _fetch_via_proxy(target, max_hops, max_bytes)
         for _hop in range(max_hops + 1):
+            if time.monotonic() > deadline:
+                return False, 502, "Upstream fetch failed: took longer than %d s" % FETCH_DEADLINE
             u = urlparse(url)
             if u.scheme not in ("http", "https") or not u.hostname:
                 return False, 400, "Only public web addresses can be fetched"
@@ -2006,18 +2126,29 @@ def fetch_public(target, max_hops=5, max_bytes=6 * 1024 * 1024):
             # fall through to the next address - as urlopen always did.
             conn, last_err = None, None
             for ip in ips[:6]:
-                c = _pinned_connection(u.scheme, u.hostname, port, ip, TIMEOUT)
-                try:
-                    c.connect()
-                    conn = c
+                for ctx in (_SSL_CTX, _SSL_LOOSE):
+                    if time.monotonic() > deadline:
+                        break
+                    c = _pinned_connection(u.scheme, u.hostname, port, ip,
+                                           max(1.0, min(TIMEOUT, deadline - time.monotonic())), ctx)
+                    try:
+                        c.connect()
+                        conn = c
+                        if ctx is _SSL_LOOSE:
+                            _note_unverified(u.hostname, last_err)
+                        break
+                    except Exception as e:
+                        last_err = e
+                        c.close()
+                        if not (u.scheme == "https" and _is_cert_error(e)):
+                            break              # only a certificate failure earns the unverified retry
+                if conn is not None:
                     break
-                except OSError as e:
-                    last_err = e
-                    c.close()
             if conn is None:
                 return False, 502, "Upstream fetch failed: %s" % last_err
             try:
-                path = (u.path or "/") + (("?" + u.query) if u.query else "")
+                sp = urlsplit(url)                 # keeps ";params" in the path
+                path = (sp.path or "/") + (("?" + sp.query) if sp.query else "")
                 conn.request("GET", path, headers=BROWSER_HEADERS)
                 resp = conn.getresponse()
                 if resp.status in (301, 302, 303, 307, 308):
@@ -2026,13 +2157,10 @@ def fetch_public(target, max_hops=5, max_bytes=6 * 1024 * 1024):
                         return False, 502, "Upstream fetch failed: redirect without a location"
                     url = urljoin(url, loc)
                     continue
-                raw = resp.read(max_bytes + 1)
-                if len(raw) > max_bytes:
-                    return False, 502, "Upstream fetch failed: response too large"
                 if resp.status >= 400:
                     return False, 502, "Upstream fetch failed: HTTP Error %d: %s" % (resp.status, resp.reason)
-                raw = _decompress(raw, (resp.getheader("Content-Encoding") or "").lower())
-                return True, resp.status, _to_utf8_text(raw, resp.getheader("Content-Type") or "")
+                raw = _read_limited(resp, deadline, lambda t: conn.sock and conn.sock.settimeout(t))
+                return True, resp.status, _body_text(raw, resp)
             finally:
                 conn.close()
         return False, 502, "Upstream fetch failed: too many redirects"
@@ -2187,20 +2315,49 @@ def _health_key(path, query):
             ch = (parse_qs(query or "").get("ch") or [""])[0][:40]
             return ("tg:" + ch, "טלגרם · " + ch, False) if ch in TG_CHANNELS else None
         if path == "/fetch":
-            host = urlparse((parse_qs(query or "").get("url") or [""])[0]).netloc.lower()[:60]
+            host = (urlparse((parse_qs(query or "").get("url") or [""])[0]).hostname or "").lower()[:60]
             if host.startswith("www."):
                 host = host[4:]
-            return ("feed:" + host, "הזנה · " + host, False) if host else None
+            # only hosts the deck itself uses (or a feed the owner added):
+            # anyone can send /fetch?url=..., and must not be able to fill
+            # this table or push real sources out of it
+            return ("feed:" + host, "הזנה · " + host, False) if host and host in _known_hosts() else None
     except Exception:
         return None
     return None
 
 
+_known = {"key": None, "hosts": frozenset()}
+
+
+def _known_hosts():
+    """Hosts the page itself references, plus feeds added in the settings."""
+    try:
+        idx = os.path.join(ROOT, "index.html")
+        key = (os.path.getmtime(idx), dlconfig.mtime())
+        if _known["key"] != key:
+            hosts = set()
+            with open(idx, encoding="utf-8", errors="replace") as f:
+                for h in re.findall(r"https?://([A-Za-z0-9.\-]+)", f.read()):
+                    hosts.add(h.lower()[4:] if h.lower().startswith("www.") else h.lower())
+            for feed in dlconfig.load()["news"]["custom"]:
+                h = (urlparse(feed["url"]).hostname or "").lower()
+                hosts.add(h[4:] if h.startswith("www.") else h)
+            _known.update(key=key, hosts=frozenset(hosts))
+    except Exception:
+        pass
+    return _known["hosts"]
+
+
 def health_note(sid, label, ok, ms, err="", critical=False, stale=None):
     now = time.time()
     with _health_lock:
-        if sid not in _health and len(_health) >= 120:
-            return                       # bounded: unknown keys cannot grow this without limit
+        if sid not in _health and len(_health) >= 80:
+            # full: the source unused for longest makes room - never a critical one
+            old = [h for h in _health.values() if not h["critical"]]
+            if not old:
+                return
+            _health.pop(min(old, key=lambda h: h["lastTry"])["id"], None)
         h = _health.setdefault(sid, {"id": sid, "label": label, "critical": critical,
                                      "ok": None, "lastOk": 0, "lastFail": 0, "lastTry": 0,
                                      "ms": 0, "error": "", "okCount": 0, "failCount": 0,
@@ -2238,7 +2395,7 @@ def _fmt_age(ts, now):
 def health_snapshot():
     now = time.time()
     with _health_lock:
-        rows = [dict(h) for h in _health.values()]
+        rows = [dict(h) for h in _health.values() if h["critical"] or now - h["lastTry"] < 24 * 3600]
     for h in rows:
         # down = the last attempt failed; stale = nobody has asked for 10 min
         h["state"] = ("unknown" if h["ok"] is None else
@@ -2261,6 +2418,7 @@ def health_snapshot():
         "threads": threading.active_count(),
         "sources": rows,
         "down": [h["label"] for h in rows if h["state"] == "down"],
+        "tlsUnverified": sorted(h for h, (t, _r) in list(_tls_unverified.items()) if now - t < 7 * 86400),
         "brain": {"up": bool(brain), "health": brain.get("health"),
                   "budget": brain.get("budget"), "checkedAt": brain.get("checkedAt")},
         "selftest": {"at": st["at"], "ago": _fmt_age(st["at"], now), "running": st["running"],
