@@ -172,3 +172,21 @@ class TestWhoMayWrite(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestIdsFromOlderFiles(Tmp):
+    def test_positional_ids_written_by_v76_are_carried_over(self):
+        self.write("config.local.json", {
+            "channels": {"custom": [{"name": "A", "src": "https://x.test/a.m3u8"}, {"name": "B", "src": "https://x.test/b.m3u8"}]},
+            "news": {"custom": [{"name": "F", "url": "https://x.test/rss"}]},
+            "prefs": {"dl-tv": '["ch14","custom2"]', "dl-featured": "custom1", "dl-news-off": '["cfeed1","tg_x"]'}})
+        c = dlconfig.load()
+        a, b = [x["id"] for x in c["channels"]["custom"]]
+        self.assertEqual(json.loads(c["prefs"]["dl-tv"]), ["ch14", b])
+        self.assertEqual(c["prefs"]["dl-featured"], a)
+        self.assertEqual(json.loads(c["prefs"]["dl-news-off"]), [c["news"]["custom"][0]["id"], "tg_x"])
+
+    def test_the_same_address_twice_is_one_channel(self):
+        self.write("config.local.json", {"channels": {"custom": [{"name": "A", "src": "https://x.test/a.m3u8"},
+                                                                  {"name": "A again", "src": "https://x.test/a.m3u8"}]}})
+        self.assertEqual(len(dlconfig.load()["channels"]["custom"]), 1)

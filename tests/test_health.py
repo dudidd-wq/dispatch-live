@@ -134,11 +134,17 @@ class TestStaticAllowList(unittest.TestCase):
     def test_no_trick_survives_windows_name_resolution(self):
         # Windows drops trailing dots and spaces and resolves streams and
         # drive-relative names; whatever passes the rule must be index.html
+        # For every trick, work out which file Windows would actually open
+        # (trailing dots/spaces dropped, ":stream" ignored, drive-relative and
+        # backslash forms resolved). If that file is anything but the page, the
+        # rule must refuse it - and it must refuse index.html by any name but
+        # its plain one, since a variant spelling is how the old rule was beaten.
         import ntpath
-        for t in self.TRICKS + ["/index.html", "/"]:
-            p = server.static_path(t)
-            if p:
-                self.assertEqual(ntpath.basename(ntpath.normpath(p)).rstrip(". ").lower(), "index.html")
+        for t in self.TRICKS:
+            name = ntpath.normpath("C:\\app\\" + t.replace("/", "\\").lstrip("\\"))
+            opened = ntpath.basename(name).split(":")[0].rstrip(". ").lower()
+            self.assertIsNone(server.static_path(t), "%s -> Windows opens %r" % (t, opened))
+        self.assertGreaterEqual(sum(1 for t in self.TRICKS if "key" in t.lower()), 8)
 
 
 class TestProxyTargets(unittest.TestCase):
@@ -174,3 +180,136 @@ class TestFetchersDoNotPassOffOldData(unittest.TestCase):
         self.assertLessEqual(len(server._health), 120)
         self.assertIsNone(server._health_key("/telegram", "ch=not_a_real_channel_%d" % 7))
         server._health.clear()
+
+
+class TestProxyHops(unittest.TestCase):
+    """The /fetch proxy against a local web server standing in for the internet."""
+
+    @classmethod
+    def setUpClass(cls):
+        import http.server, threading
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a): pass
+            def do_GET(self):
+                if self.path == "/secret":
+                    body = b"LOOPBACK SECRET"
+                    self.send_response(200); self.send_header("Content-Length", str(len(body))); self.end_headers()
+                    self.wfile.write(body)
+                elif self.path == "/to-loopback":
+                    self.send_response(302); self.send_header("Location", "http://127.0.0.1:%d/secret" % cls.port)
+                    self.send_header("Content-Length", "0"); self.end_headers()
+                elif self.path == "/hop":
+                    self.send_response(302); self.send_header("Location", "/page")
+                    self.send_header("Content-Length", "0"); self.end_headers()
+                else:
+                    body = b"<rss>ok</rss>"
+                    self.send_response(200); self.send_header("Content-Length", str(len(body))); self.end_headers()
+                    self.wfile.write(body)
+        cls.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+        cls.port = cls.httpd.server_address[1]
+        threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.httpd.shutdown()
+
+    def setUp(self):
+        self._gai, self._conn = server.socket.getaddrinfo, server._pinned_connection
+        self._getproxies = server.urllib.request.getproxies
+        server.urllib.request.getproxies = lambda: {}          # these tests exercise the direct path
+        self.resolutions = []
+
+    def tearDown(self):
+        server.socket.getaddrinfo, server._pinned_connection = self._gai, self._conn
+        server.urllib.request.getproxies = self._getproxies
+
+    def test_behind_a_proxy_every_hop_is_still_checked(self):
+        server.urllib.request.getproxies = self._getproxies
+        self.assertFalse(server._hop_allowed("http://127.0.0.1:3100/config"))
+        self.assertFalse(server._hop_allowed("http://192.168.1.1/"))
+        self.assertFalse(server._hop_allowed("file:///etc/passwd"))
+        server.urllib.request.getproxies = lambda: {"http": "http://127.0.0.1:9", "https": "http://127.0.0.1:9"}
+        self.assertEqual(server.fetch_public("http://127.0.0.1:3100/config")[1], 400)
+
+    def _internet(self, answers):
+        """public.test 'resolves' to a public address; connections to that
+        address are delivered to the local stand-in server."""
+        import socket
+        real_conn, port, test = self._conn, self.port, self
+
+        real_gai = self._gai
+
+        def gai(host, p, *a, **k):
+            try:
+                __import__("ipaddress").ip_address(str(host).strip("[]"))
+                return real_gai(host, p, *a, **k)          # a literal address: nothing to resolve
+            except ValueError:
+                pass
+            test.resolutions.append(host)
+            ip = answers(host, len(test.resolutions))
+            if ip is None:
+                raise socket.gaierror("name not known")
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, p))]
+        server.socket.getaddrinfo = gai
+        server._pinned_connection = lambda scheme, host, p, ip, timeout: real_conn(
+            scheme, host, p, "127.0.0.1" if ip == "93.184.216.34" else ip, timeout)
+
+    def test_a_public_page_and_a_same_site_redirect_work(self):
+        self._internet(lambda h, n: "93.184.216.34")
+        self.assertEqual(server.fetch_public("http://public.test:%d/page" % self.port), (True, 200, "<rss>ok</rss>"))
+        self.assertEqual(server.fetch_public("http://public.test:%d/hop" % self.port)[2], "<rss>ok</rss>")
+
+    def test_a_redirect_to_this_machine_is_refused(self):
+        self._internet(lambda h, n: "93.184.216.34")
+        ok, status, text = server.fetch_public("http://public.test:%d/to-loopback" % self.port)
+        self.assertEqual((ok, status), (False, 400)); self.assertNotIn("SECRET", text)
+
+    def test_a_name_that_changes_its_answer_cannot_reach_this_machine(self):
+        # public on the first lookup, loopback on every later one (DNS rebinding)
+        self._internet(lambda h, n: "93.184.216.34" if n == 1 else "127.0.0.1")
+        ok, status, text = server.fetch_public("http://public.test:%d/secret" % self.port)
+        self.assertEqual(len(self.resolutions), 1)             # resolved once; the checked address is the one used
+        self.assertNotEqual(server.fetch_public("http://public.test:%d/secret" % self.port)[1], 200)
+
+    def test_addresses_that_are_not_the_public_internet(self):
+        for bad in ("http://100.64.1.1/", "http://[::ffff:127.0.0.1]/", "http://2130706433/", "http://0x7f.1/",
+                    "http://public@127.0.0.1/", "http://127.1/", "http://[fe80::1]/", "http://[fc00::1]/"):
+            self.assertEqual(server.fetch_public(bad)[1], 400, bad)
+
+    def test_no_internet_is_an_ordinary_failure_not_a_refusal(self):
+        # must go down the normal failure path so the last good answer is served, marked as old
+        self._internet(lambda h, n: None)
+        ok, status, text = server.fetch_public("http://www.ynet.co.il/rss.xml")
+        self.assertEqual((ok, status), (False, 502)); self.assertIn("could not resolve", text)
+
+
+class TestSelfTestDoesNotCryWolf(unittest.TestCase):
+    def setUp(self):
+        self._brain = server.brain_get
+        server.brain_get = lambda p: None
+        server._health.clear()
+
+    def tearDown(self):
+        server.brain_get = self._brain
+        server._selftest.update(at=0.0, running=False, results=[])
+        server._health.clear()
+
+    def test_a_failed_probe_is_dropped_once_the_live_source_answers(self):
+        import time
+        server._selftest.update(at=time.time() - 100, running=False, results=[
+            {"id": "oref_alerts", "label": "A", "ok": False, "detail": "x", "critical": True, "ms": 1},
+            {"id": "quakes", "label": "Q", "ok": False, "detail": "x", "critical": False, "ms": 1}])
+        self.assertEqual(server.health_snapshot()["selftest"]["criticalFailed"], ["A"])
+        server.health_note("oref_alerts", "A", True, 100, critical=True)        # the live feed answers again
+        st = server.health_snapshot()["selftest"]
+        self.assertEqual(st["criticalFailed"], []); self.assertEqual(st["failed"], ["Q"])
+
+
+class TestStateRelayGuards(unittest.TestCase):
+    def test_port_is_part_of_the_origin(self):
+        class H:
+            def __init__(self, host, origin): self.headers = {"Host": host, "Origin": origin}
+        self.assertTrue(server._same_origin(H("192.168.1.5:3100", "http://192.168.1.5:3100")))
+        self.assertFalse(server._same_origin(H("192.168.1.5:3100", "http://192.168.1.5:8080")))
+        self.assertFalse(server._same_origin(H("localhost:3100", "null")))

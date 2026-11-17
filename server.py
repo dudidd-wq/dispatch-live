@@ -366,6 +366,17 @@ def _end_fetch(key):
 _oref_shared = {}        # url -> (finished_at, result) of the most recent fetch
 
 
+def _decode_feed(raw):
+    """Bytes -> text for the Oref feeds. They are UTF-8 with a BOM today, were
+    UTF-16 in the past, and the quiet answer has at times been NUL padding;
+    none of that may turn 'quiet' into 'no connection' or the reverse."""
+    if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        text = raw.decode("utf-16", errors="replace")
+    else:
+        text = raw.decode("utf-8-sig", errors="replace")
+    return text.replace("\x00", "").replace("\ufeff", "").strip()
+
+
 def fetch_oref(url):
     """Fetch an Oref endpoint with the headers it requires. Returns (ok, status, text).
     The realtime endpoint returns an empty body when there's no active alert —
@@ -397,7 +408,7 @@ def fetch_oref(url):
         with urlopen(req, timeout=12, context=_SSL_CTX) as resp:
             raw = resp.read()
             raw = _decompress(raw, (resp.headers.get("Content-Encoding") or "").lower())
-            text = raw.decode("utf-8-sig", errors="replace").strip()  # utf-8-sig strips BOM
+            text = _decode_feed(raw)
             if not text:
                 text = "[]"   # quiet = no active alert
             result = (True, resp.status, text)
@@ -454,9 +465,30 @@ _hist_week = {"t": 0.0, "rows": None}
 _backfill = {"t": 0.0}
 
 
+import queue as _queue
+_archive_q = _queue.Queue(maxsize=8)
+
+
+def _archive_writer():
+    while True:
+        rows = _archive_q.get()
+        try:
+            dlarchive.add_alerts(rows)
+        except Exception:
+            pass
+
+
 def _archive_async(rows):
-    """Archive writes never ride on a request thread."""
-    threading.Thread(target=dlarchive.add_alerts, args=(list(rows),), daemon=True).start()
+    """Archive writes never ride on a request thread, and never pile up: one
+    writer, a short queue, and a poll that finds the queue full is dropped
+    (the next poll carries the same rows)."""
+    if not getattr(_archive_async, "started", False):
+        _archive_async.started = True
+        threading.Thread(target=_archive_writer, daemon=True).start()
+    try:
+        _archive_q.put_nowait(list(rows))
+    except _queue.Full:
+        pass
 
 
 def _backfill_archive(now):
@@ -498,7 +530,9 @@ def fetch_oref_history():
             _archive_async(rows)
             _hist_status.update(source="api:lastDay", at=now, rows=len(rows), error="")
             return True, 200, _json.dumps(rows, ensure_ascii=False)
-        if _hist_week["rows"] is None or now - _hist_week["t"] > 600:
+        if ((_hist_week["rows"] is None or now - _hist_week["t"] > 600)
+                and now - _hist_week.get("tried", 0) > 60):
+            _hist_week["tried"] = now
             ok2, _s2, text2 = fetch_oref(OREF_HISTORY_API % "lastWeek")
             wk = _normalize_oref_api(text2) if ok2 else None
             if wk is not None:
@@ -1454,11 +1488,13 @@ def fetch_air(lat, lng):
            "&timezone=Asia%%2FJerusalem" % (lat, lng))
     ok, _s, text = fetch_oref(url)
     if not ok or not text:
-        return _fresh_or_error(_air_cache, 900, "air unavailable")
+        return (_fresh_or_error(_air_cache, 900, "air unavailable") if _air_cache.get("key") == key
+                else '{"error":"air unavailable"}')
     try:
         c = _json.loads(text)["current"]
     except Exception:
-        return _fresh_or_error(_air_cache, 900, "air unavailable")
+        return (_fresh_or_error(_air_cache, 900, "air unavailable") if _air_cache.get("key") == key
+                else '{"error":"air unavailable"}')
     aqi = c.get("european_aqi")
     dust = c.get("dust") or 0
     pm25 = c.get("pm2_5") or 0
@@ -1829,25 +1865,166 @@ def static_path(url_path):
     return full if os.path.isfile(full) else None
 
 
-def _public_target(url):
-    """True when a /fetch target is an ordinary public web address. The proxy
-    must not be a way to reach this machine or the home network: with it a web
-    page could read /config, poke the Traffic Brain, or probe the router."""
+class _NotPublic(Exception):
+    """The target is this machine or the home network."""
+
+
+class _Unresolvable(Exception):
+    """The name could not be resolved - an ordinary outage, not an attack."""
+
+
+def _public_addresses(host, port):
+    """Resolve host and return its addresses, all of them public. Raises
+    _NotPublic if ANY address is loopback, private, link-local, carrier-grade
+    NAT (100.64/10) or otherwise not a public web address, and _Unresolvable
+    when the name does not resolve (the internet is down, DNS is broken)."""
     import ipaddress
+    host = (host or "").strip().lower().strip("[]")
+    if not host or host == "localhost" or host.endswith(".localhost"):
+        raise _NotPublic(host)
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except (socket.gaierror, UnicodeError, OSError) as e:
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            raise _Unresolvable(str(e))
+        raise _NotPublic(host)
+    out = []
+    cgnat = ipaddress.ip_network("100.64.0.0/10")
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0].split("%")[0])
+        if getattr(ip, "ipv4_mapped", None):
+            ip = ip.ipv4_mapped                     # ::ffff:127.0.0.1 is 127.0.0.1
+        if (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast
+                or ip.is_reserved or ip.is_unspecified or (ip.version == 4 and ip in cgnat)):
+            raise _NotPublic(str(ip))
+        out.append(str(ip))
+    if not out:
+        raise _Unresolvable("no address")
+    return out
+
+
+def _public_target(url):
+    """True when url is an ordinary public web address (see fetch_public)."""
     try:
         u = urlparse(url)
-        host = (u.hostname or "").strip().lower()
-        if u.scheme not in ("http", "https") or not host or host == "localhost" or host.endswith(".localhost"):
+        if u.scheme not in ("http", "https") or not u.hostname:
             return False
-        for info in socket.getaddrinfo(host, u.port or (443 if u.scheme == "https" else 80),
-                                       type=socket.SOCK_STREAM):
-            ip = ipaddress.ip_address(info[4][0].split("%")[0])
-            if (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast
-                    or ip.is_reserved or ip.is_unspecified):
-                return False
+        _public_addresses(u.hostname, u.port or (443 if u.scheme == "https" else 80))
         return True
     except Exception:
         return False
+
+
+def _pinned_connection(scheme, host, port, ip, timeout):
+    """A connection that goes to the address we validated - not to whatever
+    the name resolves to a moment later (DNS rebinding)."""
+    import http.client
+
+    if scheme == "https":
+        class Conn(http.client.HTTPSConnection):
+            def connect(self):
+                sock = socket.create_connection((ip, self.port), self.timeout)
+                self.sock = _SSL_CTX.wrap_socket(sock, server_hostname=self.host)
+        return Conn(host, port, timeout=timeout, context=_SSL_CTX)
+
+    class Conn(http.client.HTTPConnection):
+        def connect(self):
+            self.sock = socket.create_connection((ip, self.port), self.timeout)
+    return Conn(host, port, timeout=timeout)
+
+
+def _hop_allowed(url):
+    """Hop check when a proxy does the connecting: refuse anything that names
+    this machine or a private network. A name we cannot resolve locally is
+    left to the proxy (which cannot reach this machine's loopback)."""
+    u = urlparse(url)
+    if u.scheme not in ("http", "https") or not u.hostname:
+        return False
+    try:
+        _public_addresses(u.hostname, u.port or (443 if u.scheme == "https" else 80))
+    except _NotPublic:
+        return False
+    except _Unresolvable:
+        pass
+    return True
+
+
+def _fetch_via_proxy(target, max_hops, max_bytes):
+    class Hops(urllib.request.HTTPRedirectHandler):
+        max_redirections = max_hops
+
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            if not _hop_allowed(newurl):
+                raise _NotPublic(newurl)
+            return urllib.request.HTTPRedirectHandler.redirect_request(self, req, fp, code, msg, headers, newurl)
+
+    if not _hop_allowed(target):
+        return False, 400, "Only public web addresses can be fetched"
+    opener = urllib.request.build_opener(Hops, urllib.request.HTTPSHandler(context=_SSL_CTX))
+    try:
+        with opener.open(Request(target, headers=BROWSER_HEADERS), timeout=TIMEOUT) as resp:
+            raw = resp.read(max_bytes + 1)
+            if len(raw) > max_bytes:
+                return False, 502, "Upstream fetch failed: response too large"
+            raw = _decompress(raw, (resp.headers.get("Content-Encoding") or "").lower())
+            return True, resp.status, _to_utf8_text(raw, resp.headers.get("Content-Type") or "")
+    except _NotPublic:
+        return False, 400, "Only public web addresses can be fetched"
+    except Exception as e:
+        return False, 502, "Upstream fetch failed: %s" % e
+
+
+def fetch_public(target, max_hops=5, max_bytes=6 * 1024 * 1024):
+    """The /fetch proxy. Returns (ok, status, text) like fetch_upstream, plus:
+    every hop (the URL and each redirect) is resolved once, checked to be a
+    public address, and connected to at exactly that address. A redirect to
+    this machine or the home network is refused. status 400 = refused target,
+    502 = ordinary upstream failure (including "the name does not resolve")."""
+    from urllib.parse import urljoin
+    url = target
+    try:
+        scheme = urlparse(target).scheme
+        if scheme in ("http", "https") and urllib.request.getproxies().get(scheme):
+            # This machine reaches the web through a proxy. A direct pinned
+            # connection would bypass it (and usually fail), so go through the
+            # proxy and validate every hop's address instead.
+            return _fetch_via_proxy(target, max_hops, max_bytes)
+        for _hop in range(max_hops + 1):
+            u = urlparse(url)
+            if u.scheme not in ("http", "https") or not u.hostname:
+                return False, 400, "Only public web addresses can be fetched"
+            port = u.port or (443 if u.scheme == "https" else 80)
+            try:
+                ip = _public_addresses(u.hostname, port)[0]
+            except _NotPublic:
+                return False, 400, "Only public web addresses can be fetched"
+            except _Unresolvable as e:
+                return False, 502, "Upstream fetch failed: could not resolve %s (%s)" % (u.hostname, str(e)[:60])
+            conn = _pinned_connection(u.scheme, u.hostname, port, ip, TIMEOUT)
+            try:
+                path = (u.path or "/") + (("?" + u.query) if u.query else "")
+                conn.request("GET", path, headers=BROWSER_HEADERS)
+                resp = conn.getresponse()
+                if resp.status in (301, 302, 303, 307, 308):
+                    loc = resp.getheader("Location")
+                    if not loc:
+                        return False, 502, "Upstream fetch failed: redirect without a location"
+                    url = urljoin(url, loc)
+                    continue
+                raw = resp.read(max_bytes + 1)
+                if len(raw) > max_bytes:
+                    return False, 502, "Upstream fetch failed: response too large"
+                if resp.status >= 400:
+                    return False, 502, "Upstream fetch failed: HTTP Error %d: %s" % (resp.status, resp.reason)
+                raw = _decompress(raw, (resp.getheader("Content-Encoding") or "").lower())
+                return True, resp.status, _to_utf8_text(raw, resp.getheader("Content-Type") or "")
+            finally:
+                conn.close()
+        return False, 502, "Upstream fetch failed: too many redirects"
+    except Exception as e:
+        return False, 502, "Upstream fetch failed: %s" % e
 
 
 def _alert_payload(text):
@@ -1874,8 +2051,15 @@ def _alert_payload(text):
         merged["data"] = cities
         return json.dumps(merged, ensure_ascii=False)
     if isinstance(d, dict):
-        if isinstance(d.get("data"), list) or isinstance(d.get("cities"), list):
-            return text
+        data, cities = d.get("data"), d.get("cities")
+        if not (isinstance(data, list) or isinstance(cities, list)):
+            return None
+        names = [c for c in (data if isinstance(data, list) and data else cities or []) if isinstance(c, str)]
+        if not names:
+            return "[]"                  # an alert object naming no locality alerts nobody
+        out = dict(d)
+        out["data"] = names
+        return json.dumps(out, ensure_ascii=False)
     return None
 
 
@@ -2040,6 +2224,11 @@ def health_snapshot():
     rows.sort(key=lambda h: (0 if h["state"] == "down" else 1, not h["critical"], h["label"]))
     brain = brain_get("/traffic") or {}
     st = dict(_selftest)
+    # A probe that failed at 03:00 is not news at 15:00 if the live source has
+    # answered since. Without this one blip kept the light red for a day.
+    live_ok = {h["id"]: h["lastOk"] for h in rows}
+    still_failed = [r for r in st["results"]
+                    if r["ok"] is False and not live_ok.get(r["id"], 0) > st["at"]]
     return {
         "build": _build_on_disk(),
         "uptimeSec": int(now - BOOT_AT),
@@ -2050,9 +2239,8 @@ def health_snapshot():
                   "budget": brain.get("budget"), "checkedAt": brain.get("checkedAt")},
         "selftest": {"at": st["at"], "ago": _fmt_age(st["at"], now), "running": st["running"],
                      "results": st["results"],
-                     "failed": [r["label"] for r in st["results"] if r["ok"] is False],
-                     "criticalFailed": [r["label"] for r in st["results"]
-                                        if r["ok"] is False and r.get("critical")]},
+                     "failed": [r["label"] for r in still_failed],
+                     "criticalFailed": [r["label"] for r in still_failed if r.get("critical")]},
     }
 
 
@@ -2185,7 +2373,9 @@ def _selftest_loop():
             run_selftest()
         except Exception:
             pass
-        time.sleep(24 * 3600)
+        # a failure is re-checked in ten minutes, not tomorrow
+        failed = any(r["ok"] is False for r in _selftest["results"])
+        time.sleep(600 if failed else 24 * 3600)
 
 
 def _same_origin(handler):
@@ -2196,8 +2386,10 @@ def _same_origin(handler):
         origin = handler.headers.get("Origin")
         if not origin:
             return True
-        host = (handler.headers.get("Host") or "").split(":")[0].lower().strip("[]")
-        return (urlparse(origin).hostname or "").lower() == host
+        o = urlparse(origin)
+        mine = urlparse("http://" + (handler.headers.get("Host") or ""))
+        return ((o.hostname or "").lower() == (mine.hostname or "").lower()
+                and (o.port or 80) == (mine.port or 80))
     except Exception:
         return False
 
@@ -2603,11 +2795,11 @@ class Handler(BaseHTTPRequestHandler):
             if not target or not re.match(r"^https?://", target, re.I):
                 self._send(400, "Bad or missing url param", "text/plain; charset=utf-8")
                 return
-            if not _public_target(target):
-                self._hkey = None            # not a source: keep it out of the health table
-                self._send(400, "Only public web addresses can be fetched", "text/plain; charset=utf-8")
+            ok, status, text = fetch_public(target)
+            if status == 400:
+                self._hkey = None            # refused, not a source: keep it out of the health table
+                self._send(400, text, "text/plain; charset=utf-8")
                 return
-            ok, status, text = fetch_upstream(target)
             self._send(
                 200 if ok else 502,
                 text,

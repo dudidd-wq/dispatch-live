@@ -9,13 +9,13 @@ echo.
 
 echo  [1] Server(s) listening on port 3100:
 echo  --------------------------------------------------
-netstat -ano | findstr ":3100" | findstr "LISTENING"
+netstat -ano | findstr /c:":3100 " | findstr "LISTENING"
 if errorlevel 1 echo     (none - the server is not running)
 echo.
 
 echo  [1b] Traffic Brain on port 3200:
 echo  --------------------------------------------------
-netstat -ano | findstr ":3200" | findstr "LISTENING"
+netstat -ano | findstr /c:":3200 " | findstr "LISTENING"
 if errorlevel 1 echo     (none - the traffic brain is not running)
 echo.
 

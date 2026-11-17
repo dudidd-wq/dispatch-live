@@ -1,4 +1,6 @@
 @echo off
+REM cd first, while delayed expansion is off (a "!" in the folder name would be mangled)
+cd /d "%~dp0"
 setlocal enabledelayedexpansion
 title DISPATCH LIVE - Command Deck
 color 0B
@@ -28,7 +30,7 @@ echo  Checking for instances already running...
 
 REM 1) Close any server still listening on port 3100.
 set "PORTPID="
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3100" ^| findstr "LISTENING"') do set "PORTPID=%%a"
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr /c:":3100 " ^| findstr "LISTENING"') do set "PORTPID=%%a"
 if defined PORTPID echo    closing old server on port 3100 [PID !PORTPID!]
 if defined PORTPID taskkill /PID !PORTPID! /F >nul 2>nul
 
@@ -45,7 +47,7 @@ REM   it is the only thing that can ever spend a Google call.
 REM   Runs in its own minimised window and keeps learning.
 REM ============================================================
 set "BRAINPID="
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3200" ^| findstr "LISTENING"') do set "BRAINPID=%%a"
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr /c:":3200 " ^| findstr "LISTENING"') do set "BRAINPID=%%a"
 if defined BRAINPID (
   echo  [OK] Traffic Brain already running [PID !BRAINPID!]
 ) else (
@@ -71,7 +73,7 @@ REM The deck has stopped - take the Traffic Brain down with it.
 echo.
 echo  Closing the Traffic Brain...
 set "BRAINPID="
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3200" ^| findstr "LISTENING"') do set "BRAINPID=%%a"
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr /c:":3200 " ^| findstr "LISTENING"') do set "BRAINPID=%%a"
 if defined BRAINPID taskkill /PID !BRAINPID! /F >nul 2>nul
 taskkill /FI "WINDOWTITLE eq Traffic Brain*" /F >nul 2>nul
 

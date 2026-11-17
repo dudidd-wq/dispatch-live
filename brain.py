@@ -643,13 +643,16 @@ def scheduler():
                 continue
             # a trigger means the model is probably wrong right now
             if pending:
-                with _lock:
-                    reason = pending.pop(0)
-                    STATE["triggers"] = pending
+                reason = pending[0]
                 # A closure in Gush Dan is no reason to re-measure Beer
                 # Sheva. Sweeping all 14 on every trigger was unbudgeted and
                 # could push the month past the free 5,000 on its own.
-                verify("trigger:" + str(reason)[:40], n=TRIGGER_BATCH)
+                res = verify("trigger:" + str(reason)[:40], n=TRIGGER_BATCH)
+                if res.get("why") != "busy":          # busy: keep the trigger for the next tick
+                    with _lock:
+                        cur = STATE.get("triggers") or []
+                        if cur and cur[0] == reason:
+                            STATE["triggers"] = cur[1:]
                 continue
             if (time.time() - last) / 60.0 >= verify_interval_min():
                 verify("scheduled")

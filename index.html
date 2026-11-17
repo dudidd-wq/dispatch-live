@@ -1463,7 +1463,7 @@
     </div>
     <div class="brand-text">
       <div class="brand-title"><span class="live-dot" id="sysDot"></span>חדר <span style="color:var(--live)">מצב</span></div>
-      <div class="brand-sub" id="brandSub">DISPATCH LIVE · IL <b class="build-tag" title="גרסת הקבצים שרצה כרגע — אם אחרי עדכון המספר לא השתנה, מוגשת גרסה ישנה">v17.11-77</b></div>
+      <div class="brand-sub" id="brandSub">DISPATCH LIVE · IL <b class="build-tag" title="גרסת הקבצים שרצה כרגע — אם אחרי עדכון המספר לא השתנה, מוגשת גרסה ישנה">v17.11-78</b></div>
     </div>
   </div>
 
@@ -1718,15 +1718,36 @@ const LS_RAW = { set: Storage.prototype.setItem, rem: Storage.prototype.removeIt
   const writable = !!DL_CFG.writable;
   for (const k of CFG_SYNC_KEYS) {
     try {
-      if (prefs[k] == null) continue;
-      // On this computer the file is the truth. On any other device (a phone
-      // on the Wi-Fi cannot write the file) it only fills in what that device
-      // never chose for itself - otherwise its own choices would be undone on
-      // every reload.
-      if (writable || localStorage.getItem(k) == null) LS_RAW.set.call(localStorage, k, String(prefs[k]));
+      const fileV = prefs[k] == null ? null : String(prefs[k]);
+      // On this computer the file is the truth.
+      if (writable) { if (fileV != null) LS_RAW.set.call(localStorage, k, fileV); continue; }
+      // Any other device (a phone on the Wi-Fi cannot write the file) follows
+      // the file for every key it has not changed itself: we remember what we
+      // last gave it, and as long as its value is still that, it keeps
+      // following - so a new home address reaches every screen. A value the
+      // device chose for itself is left alone.
+      const cur = localStorage.getItem(k), rec = localStorage.getItem('dl-cfg-seed:' + k);
+      if (cur == null || rec == null || cur === rec) {
+        if (fileV != null) {
+          LS_RAW.set.call(localStorage, k, fileV);
+          LS_RAW.set.call(localStorage, 'dl-cfg-seed:' + k, fileV);
+        } else if (cur != null && cur === rec) {
+          LS_RAW.rem.call(localStorage, k);
+          LS_RAW.rem.call(localStorage, 'dl-cfg-seed:' + k);
+        }
+      }
     } catch {}
   }
-  if (!writable) return;
+  if (!writable) {
+    // v76 copied the owner's siren mute to every screen. Undo that once.
+    try {
+      if (!localStorage.getItem('dl-cfg-sound-reset')) {
+        LS_RAW.rem.call(localStorage, 'dl-sound');
+        LS_RAW.set.call(localStorage, 'dl-cfg-sound-reset', '1');
+      }
+    } catch {}
+    return;
+  }
   const pending = {}; let timer = null, retries = 0;
   const flush = (leaving) => {
     timer = null;
@@ -1878,7 +1899,7 @@ const state = {
     const saved = lsList('dl-tv');
     const s = new Set(saved || CHANNELS.map(c=>c.id));
     // one-time migration: surface the new ערוץ 16 for existing users
-    if (saved && !localStorage.getItem('dl-ch16-mig')) {
+    if (saved && !localStorage.getItem('dl-ch16-mig') && !(CFG && CFG.prefs && CFG.prefs['dl-tv'])) {
       s.add('ch16');
       localStorage.setItem('dl-ch16-mig', '1');
       localStorage.setItem('dl-tv', JSON.stringify([...s]));
@@ -3121,6 +3142,35 @@ async function pollAlerts() {
   }
 }
 
+// What a live message is. The feed also announces that an event is over and,
+// ahead of time, that alerts are expected - sounding the siren and ordering
+// people into the shelter for "the event has ended" is the worst possible
+// reading of it.
+function alertKind(data) {
+  const t = (data.title || '') + ' ' + (data.desc || '');
+  if (/האירוע הסתיים|הסתיים האירוע|ניתן לצאת|יכולים לצאת|הסתיימה|חזרה לשגרה/.test(t)) return 'ended';
+  if (/בדקות הקרובות|צפויות להתקבל התרעות|הנחיה מקדימה|התרעה מקדימה/.test(t)) return 'early';
+  return 'attack';
+}
+let _noticeTimer = null;
+function showLiveNotice(kind, title, cities) {
+  let el = $('liveNotice');
+  if (!el) {
+    el = document.createElement('div'); el.id = 'liveNotice';
+    el.style.cssText = 'position:fixed;top:64px;left:50%;transform:translateX(-50%);z-index:70;max-width:80vw;padding:12px 22px;' +
+      'border-radius:12px;font:800 19px Heebo,Assistant,sans-serif;color:#fff;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,.6)';
+    document.body.appendChild(el);
+  }
+  const mine = myCityName();
+  const hitsMe = mine && cities.some(c => c.includes(mine) || mine.includes(c));
+  el.style.background = kind === 'ended' ? 'rgba(21,128,61,0.96)' : 'rgba(180,83,9,0.97)';
+  el.style.border = '2px solid ' + (kind === 'ended' ? '#4ade80' : '#fbbf24');
+  el.innerHTML = `${kind === 'ended' ? '✓' : '⚠'} ${esc(title)}${hitsMe ? ' · ' + esc(mine) : ''}
+    <div style="font:600 13px Assistant,sans-serif;opacity:.92;margin-top:4px">${esc(cities.slice(0, 8).join(' · '))}${cities.length > 8 ? ' ועוד ' + (cities.length - 8) : ''}</div>`;
+  el.hidden = false;
+  clearTimeout(_noticeTimer);
+  _noticeTimer = setTimeout(() => { el.hidden = true; }, kind === 'ended' ? 90e3 : 240e3);
+}
 function handleAlertData(data) {
   // Active alert shape: { id, cat, title, data:[cities], desc } OR empty []
   const hasAlert = data && !Array.isArray(data) && (data.data || data.cities);
@@ -3129,7 +3179,15 @@ function handleAlertData(data) {
   const desc = hasAlert ? (data.desc || '') : '';
   const id = hasAlert ? (data.id || cities.join(',')) : null;
 
-  if (hasAlert && cities.length) {
+  const kind = hasAlert ? alertKind(data) : null;
+  if (hasAlert && cities.length && kind !== 'attack') {
+    // not an attack: no siren, no takeover, no shelter countdown
+    state.lastAlertId = id;
+    state.alertActive = false;
+    hideTakeover();
+    setAlertChrome(false, 0);
+    showLiveNotice(kind, title, cities);
+  } else if (hasAlert && cities.length) {
     if (id !== state.lastAlertId) { state.lastAlertId = id; playSiren(); }
     state.alertActive = true;
     showTakeover(title, desc, cities);
@@ -4480,21 +4538,33 @@ const STALE_LABEL = { '/oref/history': 'היסטוריית התרעות', '/idf'
 function noteStale(url, r) {
   const path = String(url).split('?')[0];
   if (!STALE_LABEL[path]) return;
+  // one entry per source: a new /air request for another city replaces the
+  // old one instead of leaving it behind. Feeds are separate sources.
+  const perUrl = path === '/fetch' || path === '/telegram';
+  const key = perUrl ? String(url) : path;
+  let label = STALE_LABEL[path];
+  if (path === '/fetch') {
+    let host = '';
+    try { host = new URL(new URL(url, location.href).searchParams.get('url')).hostname; } catch {}
+    if (/ip-api|ipapi|ipwho/.test(host)) return;            // location lookup: nothing to show
+    label = /open-meteo/.test(host) ? 'מזג אוויר' : /hebcal/.test(host) ? 'זמני שבת' : 'חדשות';
+  }
   const age = parseInt(r.headers.get('X-DL-Stale') || '', 10);
-  const had = !!STALE[url];
-  if (!isNaN(age)) STALE[url] = { path, at: Date.now() - age * 1000 };
-  else delete STALE[url];
-  if (had !== !!STALE[url] || !isNaN(age)) renderStaleBar();
+  if (!isNaN(age)) STALE[key] = { label, at: Date.now() - age * 1000, seen: Date.now() };
+  else delete STALE[key];
+  renderStaleBar();
 }
 function renderStaleBar() {
   let bar = $('staleBar');
   const byPath = {};
-  for (const v of Object.values(STALE)) {
-    const g = byPath[v.path] || (byPath[v.path] = { n: 0, at: v.at });
+  for (const [k, v] of Object.entries(STALE)) {
+    // a source nobody has asked about for 20 minutes is no longer on screen
+    if (Date.now() - v.seen > 20 * 60e3) { delete STALE[k]; continue; }
+    const g = byPath[v.label] || (byPath[v.label] = { n: 0, at: v.at });
     g.n++; g.at = Math.min(g.at, v.at);
   }
-  const parts = Object.entries(byPath).map(([path, g]) =>
-    `${STALE_LABEL[path]}${g.n > 1 ? ' (' + g.n + ')' : ''} · נכון ל-${new Date(g.at).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}`);
+  const parts = Object.entries(byPath).map(([label, g]) =>
+    `${label}${g.n > 1 ? ' (' + g.n + ')' : ''} · נכון ל-${new Date(g.at).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}`);
   if (!parts.length) { if (bar) bar.hidden = true; return; }
   if (!bar) {
     bar = document.createElement('div'); bar.id = 'staleBar';
@@ -4740,6 +4810,11 @@ function renderSettings(resp) {
   $('setSave').disabled = !resp.writable; $('setImport').disabled = !resp.writable; $('setReset').disabled = !resp.writable;
   // ids that are stored but have no checkbox here (Telegram sources, channels
   // from another version) must survive a save untouched
+  $('setSound').addEventListener('change', e => {      // this screen only; no Save needed
+    try { LS_RAW.set.call(localStorage, 'dl-sound', e.target.checked ? 'on' : 'off'); } catch {}
+    state.alertSound = e.target.checked;
+    $('setMsg').textContent = e.target.checked ? 'צליל ההתרעה במסך הזה פעיל.' : 'צליל ההתרעה במסך הזה כבוי.';
+  });
   _setPrev = { tv: j(p['dl-tv'], null), off: j(p['dl-news-off'], []) };
   _setBase = collectSettings();
 }
@@ -4815,24 +4890,32 @@ $('setSave').addEventListener('click', async () => {
   try {
     const now = collectSettings();
     const patch = settingsDiff(_setBase || now, now);
-    // the siren sound belongs to this screen, not to the shared file
-    const soundNow = $('setSound').checked ? 'on' : 'off';
-    const soundChanged = (localStorage.getItem('dl-sound') === 'off' ? 'off' : 'on') !== soundNow;
-    if (!Object.keys(patch).length && !soundChanged) { $('setMsg').textContent = 'אין שינויים לשמור.'; return; }
+    if (!Object.keys(patch).length) { $('setMsg').textContent = 'אין שינויים לשמור.'; return; }
     const prefs = { ...(patch.prefs || {}) };
     if (Object.keys(patch).length) {
       const d = await postConfig({ patch });
-      // a channel added just now should be visible without a second visit
+      // An id is derived from the address. When the address of an existing
+      // custom entry was edited its id changed: carry its on/off and featured
+      // state over (matched by name). A brand-new channel is switched on.
       const before = new Set(CHANNELS.map(c => c.id));
-      const added = (d.config.channels.custom || []).map(c => c.id).filter(id => !before.has(id));
-      if (added.length) {
-        const tv = [...new Set([...JSON.parse(now.prefs['dl-tv'] || '[]'), ...added])];
-        prefs['dl-tv'] = JSON.stringify(tv);
-        await postConfig({ patch: { prefs: { 'dl-tv': prefs['dl-tv'] } } });
+      const newCustom = d.config.channels.custom || [];
+      const moved = {};
+      for (const oc of CHANNELS.filter(c => c.custom)) {
+        const nc = newCustom.find(x => x.name === oc.name);
+        if (nc && nc.id !== oc.id) moved[oc.id] = nc.id;
+      }
+      const added = newCustom.map(c => c.id).filter(id => !before.has(id) && !Object.values(moved).includes(id));
+      const fix = {};
+      const tvWas = JSON.parse(now.prefs['dl-tv'] || '[]');
+      const tvNow = [...new Set([...tvWas.map(id => moved[id] || id), ...added])];
+      if (JSON.stringify(tvNow) !== JSON.stringify(tvWas)) fix['dl-tv'] = JSON.stringify(tvNow);
+      for (const k of ['dl-featured', 'dl-featured2']) if (moved[now.prefs[k]]) fix[k] = moved[now.prefs[k]];
+      if (Object.keys(fix).length) {
+        Object.assign(prefs, fix);
+        await postConfig({ patch: { prefs: fix } });
       }
     }
     applyPrefsLocally(prefs, true);
-    try { LS_RAW.set.call(localStorage, 'dl-sound', soundNow); } catch {}
     $('setMsg').textContent = 'נשמר. טוען מחדש…';
     setTimeout(() => location.reload(), 500);
   } catch (e) { $('setMsg').textContent = 'לא נשמר: ' + e.message; }
@@ -4877,7 +4960,7 @@ document.addEventListener('keydown', e => {
   if (!$('archiveOverlay').hidden) $('archiveOverlay').hidden = true;
 });
 
-const DL_BUILD = '17.11-77';
+const DL_BUILD = '17.11-78';
 console.log('%cDispatch LIVE build ' + DL_BUILD, 'color:#22d3ee;font-weight:bold');
 const TENSION_W = { alerts: 0.50, idf: 0.20, news: 0.30 };  // component weights
 const TENSION_BASELINE = 12;   // structural background level for Israel

@@ -196,6 +196,12 @@ def sanitize(cfg):
         if name and src.lower().startswith(("http://", "https://")):
             chans.append({"id": _stable_id("c", src), "name": name,
                           "type": "iframe" if c.get("type") == "iframe" else "hls", "src": src})
+    seen, uniq = set(), []
+    for c in chans:                       # the same address twice is one channel
+        if c["id"] not in seen:
+            seen.add(c["id"]); uniq.append(c)
+    old_ch = {"custom%d" % (i + 1): c["id"] for i, c in enumerate(chans)}     # ids written by v76
+    chans = uniq
     out["channels"] = {"custom": chans}
 
     feeds = []
@@ -209,7 +215,27 @@ def sanitize(cfg):
         if name and url.lower().startswith(("http://", "https://")):
             feeds.append({"id": _stable_id("f", url), "name": name, "url": url,
                           "region": "world" if c.get("region") == "world" else "il"})
-    out["news"] = {"custom": feeds}
+    seen, uniq = set(), []
+    for f in feeds:
+        if f["id"] not in seen:
+            seen.add(f["id"]); uniq.append(f)
+    old_feed = {"cfeed%d" % (i + 1): f["id"] for i, f in enumerate(feeds)}
+    out["news"] = {"custom": uniq}
+
+    # v76 numbered custom entries by position (custom1, cfeed1). Carry any such
+    # id still stored in the preferences over to the address-based id.
+    def remap(key, table):
+        try:
+            ids = json.loads(out["prefs"][key]) if out["prefs"].get(key) else None
+        except Exception:
+            ids = None
+        if ids and any(i in table for i in ids):
+            out["prefs"][key] = json.dumps([table.get(i, i) for i in ids], ensure_ascii=False)
+    remap("dl-tv", old_ch)
+    remap("dl-news-off", old_feed)
+    for k in ("dl-featured", "dl-featured2"):
+        if out["prefs"].get(k) in old_ch:
+            out["prefs"][k] = old_ch[out["prefs"][k]]
 
     disp = cfg.get("display") if isinstance(cfg.get("display"), dict) else {}
     out["display"] = {"fontScale": round(_num(disp.get("fontScale"), 0.8, 1.5, 1.0), 2)}

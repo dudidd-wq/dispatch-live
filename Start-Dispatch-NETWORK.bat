@@ -1,4 +1,6 @@
 @echo off
+REM cd first, while delayed expansion is off (a "!" in the folder name would be mangled)
+cd /d "%~dp0"
 setlocal enabledelayedexpansion
 title DISPATCH LIVE - Network Mode (phone access)
 color 0D
@@ -25,7 +27,7 @@ echo.
 
 REM Close any old server on port 3100 first.
 set "PORTPID="
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3100" ^| findstr "LISTENING"') do set "PORTPID=%%a"
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr /c:":3100 " ^| findstr "LISTENING"') do set "PORTPID=%%a"
 if defined PORTPID taskkill /PID !PORTPID! /F >nul 2>nul
 
 echo  Starting in NETWORK mode...

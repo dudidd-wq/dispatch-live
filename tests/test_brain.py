@@ -159,3 +159,18 @@ class TestBudgetIsAWall(Base):
             self.assertEqual(self.sent, 0)
         finally:
             brain.MONTHLY_CAP = cap
+
+
+class TestTriggerSurvivesBusy(TestBudgetIsAWall):
+    def test_a_trigger_that_met_a_running_verify_is_not_lost(self):
+        self._fake()
+        brain.STATE["triggers"] = ["road-incident"]
+        self.assertTrue(brain._verify_gate.acquire(blocking=False))       # a manual verify is in progress
+        try:
+            res = brain.verify("trigger:road-incident", n=2)
+            self.assertEqual(res.get("why"), "busy")
+            self.assertEqual(brain.STATE["triggers"], ["road-incident"])   # verify itself never drops it
+        finally:
+            brain._verify_gate.release()
+        src = open(os.path.join(os.path.dirname(__file__), "..", "brain.py"), encoding="utf-8").read()
+        self.assertIn('if res.get("why") != "busy":', src)                # and the scheduler pops only after a real run

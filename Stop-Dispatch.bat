@@ -1,4 +1,6 @@
 @echo off
+REM cd first, while delayed expansion is off (a "!" in the folder name would be mangled)
+cd /d "%~dp0"
 setlocal enabledelayedexpansion
 title Stop Dispatch LIVE
 color 0C
@@ -17,13 +19,13 @@ powershell -NoProfile -Command "$p=Get-CimInstance Win32_Process | Where-Object 
 REM --- 2) Stop the local server on port 3100 ---
 echo  Stopping the local server on port 3100...
 set "PORTPID="
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3100" ^| findstr "LISTENING"') do set "PORTPID=%%a"
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr /c:":3100 " ^| findstr "LISTENING"') do set "PORTPID=%%a"
 if defined PORTPID taskkill /PID !PORTPID! /F >nul 2>nul
 
 REM --- 3) Stop the Traffic Brain on port 3200 ---
 echo  Stopping the Traffic Brain on port 3200...
 set "BRAINPID="
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3200" ^| findstr "LISTENING"') do set "BRAINPID=%%a"
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr /c:":3200 " ^| findstr "LISTENING"') do set "BRAINPID=%%a"
 if defined BRAINPID taskkill /PID !BRAINPID! /F >nul 2>nul
 taskkill /FI "WINDOWTITLE eq Traffic Brain*" /F >nul 2>nul
 

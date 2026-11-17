@@ -97,6 +97,22 @@ const PORT = process.env.PORT || '3187';
     }
     await page.evaluate(() => { hideTakeover && hideTakeover(); });
 
+    // "the event has ended" and an early warning are not attacks: no siren, no takeover
+    await page.evaluate(() => { window.__sirens = 0; window.playSiren = () => { window.__sirens++; }; });
+    for (const [name, obj, wantTakeover] of [
+        ['ended', { id: 'e1', cat: '10', title: 'האירוע הסתיים', data: ['בת ים'], desc: 'ניתן לצאת מהמרחב המוגן' }, false],
+        ['early', { id: 'w1', cat: '10', title: 'בדקות הקרובות צפויות להתקבל התרעות באזורך', data: ['בת ים'], desc: '' }, false],
+        ['attack', { id: 'a1', cat: '1', title: 'ירי רקטות וטילים', data: ['בת ים'], desc: 'היכנסו למרחב המוגן' }, true]]) {
+      const r = await page.evaluate(o => { window.__sirens = 0; handleAlertData(o);
+        const n = document.getElementById('liveNotice');
+        return { takeover: document.getElementById('takeover').classList.contains('show'), sirens: window.__sirens,
+                 active: !!state.alertActive, notice: !!(n && !n.hidden) }; }, obj);
+      console.log('alert-kind', name, JSON.stringify(r));
+      if (r.takeover !== wantTakeover || r.active !== wantTakeover || (r.sirens > 0) !== wantTakeover) fail('live message "' + name + '" handled as ' + JSON.stringify(r));
+      if (!wantTakeover && !r.notice) fail('live message "' + name + '" is not shown at all');
+      await page.evaluate(() => { handleAlertData([]); const n = document.getElementById('liveNotice'); if (n) n.hidden = true; });
+    }
+
     // an old answer must be labelled as old
     await page.evaluate(async () => { await tfetch('/quakes'); });
     await page.route('**/quakes', r => r.fulfill({ status: 200, contentType: 'application/json', body: '[]',
@@ -106,6 +122,54 @@ const PORT = process.env.PORT || '3187';
     console.log('stale bar:', bar);
     if (!bar.includes('רעידות אדמה')) fail('stale data is not labelled');
     await page.unroute('**/quakes');
+    await page.route('**/quakes', r => r.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
+    await page.evaluate(async () => { await tfetch('/quakes'); });
+    const cleared = await page.evaluate(() => { const b = document.getElementById('staleBar'); return !b || b.hidden || !b.textContent.includes('רעידות אדמה'); });
+    if (!cleared) fail('the stale bar still names a source after it recovered');
+    await page.unroute('**/quakes');
+
+    // a screen that cannot write the file follows the owner's home until it chooses its own
+    {
+      const base = 'http://127.0.0.1:' + PORT;
+      const cfg = await (await fetch(base + '/config')).json();
+      const phone = await (await browser.newContext()).newPage();
+      let city = 'חולון';
+      await phone.route('**/config', async r => {
+        if (r.request().method() !== 'GET') return r.fulfill({ status: 403, body: '{}' });
+        const c = JSON.parse(JSON.stringify(cfg)); c.writable = false;
+        c.config.prefs['dl-city'] = city; c.config.prefs['dl-lat'] = '32.011'; c.config.prefs['dl-lng'] = '34.772';
+        r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(c) });
+      });
+      const cityOf = () => phone.evaluate(() => localStorage.getItem('dl-city'));
+      await phone.goto(base + '/', { waitUntil: 'domcontentloaded' });
+      const first = await cityOf();
+      city = 'חיפה';                                   // the owner moves the home on the PC
+      await phone.reload({ waitUntil: 'domcontentloaded' });
+      const followed = await cityOf();
+      await phone.evaluate(() => localStorage.setItem('dl-city', 'אילת'));     // the phone picks its own city
+      city = 'רחובות';
+      await phone.reload({ waitUntil: 'domcontentloaded' });
+      const own = await cityOf();
+      console.log('read-only screen:', first, '->', followed, '-> own choice kept:', own);
+      if (first !== 'חולון' || followed !== 'חיפה') fail('a read-only screen does not follow the owner (' + first + ', ' + followed + ')');
+      if (own !== 'אילת') fail('a read-only screen lost its own choice (' + own + ')');
+      await phone.context().close();
+    }
+
+    // saving one change must not disturb stored ids the screen does not show
+    await fetch('http://127.0.0.1:' + PORT + '/config', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ patch: { prefs: { 'dl-news-off': '["tg_hidden_source"]', 'dl-lat': '31.5', 'dl-lng': '34.9' } } }) });
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(2500);
+    await page.click('#settingsBtn');
+    await page.waitForSelector('#setHeavy');
+    await page.fill('#setHeavy', '33');
+    await page.click('#setSave');
+    await page.waitForTimeout(4000);
+    const kept = (await (await fetch('http://127.0.0.1:' + PORT + '/config')).json()).config;
+    console.log('after a one-field save:', kept.prefs['dl-news-off'], kept.prefs['dl-lat'], kept.traffic.heavyDelay);
+    if (!String(kept.prefs['dl-news-off']).includes('tg_hidden_source')) fail('a hidden source id was dropped by a settings save');
+    if (kept.prefs['dl-lat'] !== '31.5' || kept.traffic.heavyDelay !== 33) fail('a one-field save changed other settings');
 
     // hostile stored preferences must not take the page down
     const ctx2 = await browser.newContext();

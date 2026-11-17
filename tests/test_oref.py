@@ -37,7 +37,7 @@ class TestNormalise(unittest.TestCase):
 class TestHistoryChain(unittest.TestCase):
     def setUp(self):
         self.real = server.fetch_oref
-        server._hist_week.update(t=0.0, rows=None)
+        server._hist_week.update(t=0.0, rows=None, tried=0)
         self.calls = []
         self._async = server._archive_async
         server._archive_async = lambda rows: dlarchive.add_alerts(rows)     # synchronous in tests
@@ -72,6 +72,13 @@ class TestHistoryChain(unittest.TestCase):
         server.fetch_oref_history()
         self.assertEqual(sum("lastWeek" in u for u in self.calls), 1)   # second poll used the cache
 
+    def test_a_failing_week_fetch_is_retried_at_most_once_a_minute(self):
+        self._serve([("period=lastDay", (True, 200, API_EMPTY)), ("period=lastWeek", (False, 502, "{}")),
+                     ("AlertsHistory.json", (True, 200, "[]"))])
+        for _ in range(5):
+            server.fetch_oref_history()
+        self.assertEqual(sum("lastWeek" in u for u in self.calls), 1)
+
     def test_truly_quiet_week_is_a_valid_empty_answer(self):
         self._serve([("period=", (True, 200, API_EMPTY)), ("AlertsHistory.json", (True, 200, "[]"))])
         self.assertEqual(server.fetch_oref_history(), (True, 200, "[]"))
@@ -80,7 +87,7 @@ class TestHistoryChain(unittest.TestCase):
         # Oref only goes back a week; the deck remembers further
         self._serve([("period=lastDay", (True, 200, API_WEEK))])
         server.fetch_oref_history()                      # this poll is archived
-        server._hist_week.update(t=0.0, rows=None)
+        server._hist_week.update(t=0.0, rows=None, tried=0)
         self._serve([("period=", (True, 200, API_EMPTY)), ("AlertsHistory.json", (True, 200, "[]"))])
         ok, _, txt = server.fetch_oref_history()
         rows = json.loads(txt)
@@ -199,6 +206,18 @@ class TestAlertShape(unittest.TestCase):
         out = json.loads(server._alert_payload('[{"id":"1","title":"t","data":["a","b"]},{"id":"2","title":"t","data":["b","c"]}]'))
         self.assertEqual(out["data"], ["a", "b", "c"])
         self.assertIsNone(server._alert_payload('[{"id":"1","title":"no localities"}]'))
+        # an alert that names no locality alerts nobody; "cities" is honoured when "data" is empty
+        self.assertEqual(server._alert_payload('{"id":"1","title":"t","data":[]}'), "[]")
+        self.assertEqual(json.loads(server._alert_payload('{"title":"t","data":[],"cities":["x"]}'))["data"], ["x"])
+
+    def test_the_feed_in_every_encoding_it_has_used(self):
+        # constructed from the feed's documented format, not a recording
+        alert = '{"id":"134000000000000000","cat":"1","title":"ירי רקטות וטילים","data":["שדרות, איבים, ניר עם"],"desc":"היכנסו למרחב המוגן"}'
+        for raw in (alert.encode("utf-8"), b"\xef\xbb\xbf" + alert.encode("utf-8"),
+                    b"\xff\xfe" + alert.encode("utf-16-le"), b"\xfe\xff" + alert.encode("utf-16-be")):
+            self.assertEqual(json.loads(server._alert_payload(server._decode_feed(raw)))["data"], ["שדרות, איבים, ניר עם"])
+        for quiet in (b"", b"\xef\xbb\xbf", b"\r\n", b"\xef\xbb\xbf\r\n", b"\x00\x00\x00", b"\xff\xfe", b" \n "):
+            self.assertEqual(server._decode_feed(quiet), "", quiet)          # the route turns "" into []
         self.assertEqual(server._alert_payload("[]"), "[]")
 
     def test_everything_else_is_a_failure_not_quiet(self):
