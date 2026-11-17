@@ -7,7 +7,7 @@ const fs = require('fs'), os = require('os');
 const SRC = path.join(__dirname, '..');
 // a scratch copy: the settings test writes config.local.json and must not touch the checkout
 const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-render-'));
-for (const f of ['index.html', 'server.py', 'brain.py', 'dlconfig.py', 'dlarchive.py']) fs.copyFileSync(path.join(SRC, f), path.join(ROOT, f));
+for (const f of ['index.html', 'server.py', 'brain.py', 'dlconfig.py', 'dlarchive.py', 'dlupdate.py']) fs.copyFileSync(path.join(SRC, f), path.join(ROOT, f));
 const PORT = process.env.PORT || '3187';
 
 (async () => {
@@ -397,6 +397,14 @@ const PORT = process.env.PORT || '3187';
       if (d.cols !== '1') fail('news columns not applied: ' + d.cols);
       if (d.strip === 'none' || stripTv !== 'none') fail('markets strip rule not applied: ' + d.strip + '/' + stripTv);
       await pg.context().close();
+    }
+
+    // Shabbat band helpers
+    {
+      const h = await page.evaluate(() => [hdateHe('11 Kislev 5787'), hdateHe('15 Sh\'vat 5787'), hdateHe('1 Adar II 5787'),
+        haftaraHe('Hosea 12:13-14:10'), haftaraHe('I Kings 18:46-19:21'), heDay(30), heDay(16)]);
+      console.log('shabbat band helpers:', h.join(' | '));
+      if (h.join('|') !== 'י״א כסלו|ט״ו שבט|א׳ אדר ב׳|הושע 12:13–14:10|מלכים א 18:46–19:21|ל׳|ט״ז') fail('Hebrew date or Haftarah conversion: ' + h.join('|'));
     }
 
     // pairing custom entries across a save

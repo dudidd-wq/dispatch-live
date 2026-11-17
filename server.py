@@ -37,6 +37,7 @@ import time as _time
 import time
 import dlconfig
 import dlarchive
+import dlupdate
 LAST_REQ = {"t": None}   # armed on the first request
 
 def _touch_activity():
@@ -1899,6 +1900,22 @@ def fetch_idf_spokesperson():
 
 # The only files the deck ever needs from disk. Everything else the page uses
 # comes from an endpoint. Nothing in this folder besides these is servable.
+# ---- one-click update (dlupdate.py) ----
+_update_lock = threading.Lock()
+
+
+def _restart_brain():
+    """Ask a running Traffic Brain to restart into its updated code. The custom
+    header makes a browser preflight it, so no web page can trigger it."""
+    try:
+        req = urllib.request.Request(BRAIN_URL + "/restart", data=b"{}", method="POST",
+                                     headers={"X-DL-Restart": "1", "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=3) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
 STATIC_FILES = {"index.html"}
 _SEGMENT_OK = re.compile(r"^[A-Za-z0-9_\-]+(\.[A-Za-z0-9_\-]+)*$")
 
@@ -2281,6 +2298,34 @@ def fetch_public(target, max_hops=5, max_bytes=6 * 1024 * 1024):
     finally:
         if guard is not None:
             guard.cancel()
+
+
+# ---- Hayom Yom from a local file the owner supplies ----
+# The text is published by Kehot; no source offers it to programs, so the
+# deck reads it only from hayomyom.json next to server.py (never in the
+# repository). Keys are Hebrew dates as Hebcal writes them ("11 Kislev",
+# "1 Adar II"); a key may also name a weekday-specific entry. Values are text.
+_hayom_cache = {"mtime": None, "data": {}}
+
+
+def hayomyom_entry(hdate):
+    path = os.path.join(ROOT, "hayomyom.json")
+    try:
+        mt = os.path.getmtime(path)
+    except OSError:
+        return None
+    if _hayom_cache["mtime"] != mt:
+        try:
+            with open(path, encoding="utf-8-sig") as f:
+                raw = json.load(f)
+            data = {" ".join(str(k).split()).lower(): str(v)[:2000] for k, v in raw.items()} if isinstance(raw, dict) else {}
+        except Exception:
+            data = {}
+        _hayom_cache.update(mtime=mt, data=data)
+    key = " ".join(str(hdate or "").split()).lower()
+    key = re.sub(r"\s+\d{4}$", "", key)            # "11 Kislev 5787" -> "11 kislev"
+    text = _hayom_cache["data"].get(key)
+    return {"day": hdate, "text": text} if text else None
 
 
 # The deck's alertKind(), in Python, for merging a list of live messages.
@@ -2861,6 +2906,32 @@ class Handler(BaseHTTPRequestHandler):
                     ok = False
             self._send(200 if ok else 400, json.dumps({"ok": bool(ok)}), "application/json; charset=utf-8")
             return
+        if parsed.path in ("/update/apply", "/update/rollback"):
+            if not _is_local_request(self):
+                self._send(403, '{"ok":false,"message":"אפשר לעדכן רק מהמחשב שמריץ את המערכת"}',
+                           "application/json; charset=utf-8")
+                return
+            if not _update_lock.acquire(blocking=False):
+                self._send(409, '{"ok":false,"message":"עדכון כבר בתהליך"}', "application/json; charset=utf-8")
+                return
+            try:
+                res = dlupdate.apply(ROOT) if parsed.path == "/update/apply" else dlupdate.rollback(ROOT)
+            except dlupdate.UpdateError as e:
+                _update_lock.release()
+                self._send(400, json.dumps({"ok": False, "message": str(e)}, ensure_ascii=False),
+                           "application/json; charset=utf-8")
+                return
+            except Exception as e:
+                _update_lock.release()
+                self._send(500, json.dumps({"ok": False, "message": "העדכון נכשל: %s" % e}, ensure_ascii=False),
+                           "application/json; charset=utf-8")
+                return
+            res["ok"] = True
+            res["brainRestart"] = "brain.py" in res.get("changed", []) and _restart_brain()
+            print("  [update] %s -> %s: %s" % (res.get("from"), res.get("to"), ", ".join(res.get("changed") or []) or "no file changed"))
+            self._send(200, json.dumps(res, ensure_ascii=False), "application/json; charset=utf-8")
+            dlupdate.restart(sys.argv)                  # the lock is released by the process ending
+            return
         if parsed.path == "/config":
             if not _is_local_request(self):
                 self._send(403, '{"ok":false,"error":"settings can only be changed on this computer"}',
@@ -2935,6 +3006,20 @@ class Handler(BaseHTTPRequestHandler):
                     out["stats"] = dlarchive.stats()
             except Exception as e:
                 out = {"error": "bad request: %s" % str(e)[:60]}
+            self._send(200, json.dumps(out, ensure_ascii=False), "application/json; charset=utf-8",
+                       {"Cache-Control": "no-store"})
+            return
+        if parsed.path == "/update/status":
+            q = parse_qs(parsed.query)
+            out = {"current": dlupdate.current_build(ROOT), "backups": dlupdate.backups(ROOT)[:3],
+                   "repo": dlupdate.REPO, "writable": _is_local_request(self)}
+            try:
+                out.update(dlupdate.check(ROOT, force=(q.get("force") or [""])[0] == "1"))
+                out["ok"] = True
+            except dlupdate.UpdateError as e:
+                out.update(ok=False, message=str(e))
+            except Exception as e:
+                out.update(ok=False, message="הבדיקה נכשלה: %s" % e)
             self._send(200, json.dumps(out, ensure_ascii=False), "application/json; charset=utf-8",
                        {"Cache-Control": "no-store"})
             return
@@ -3068,6 +3153,11 @@ class Handler(BaseHTTPRequestHandler):
             text = fetch_traffic()
             self._send(200, text, "application/json; charset=utf-8",
                        {"Access-Control-Allow-Origin": "*", "Cache-Control": "no-store"})
+            return
+        if parsed.path == "/hayomyom":
+            entry = hayomyom_entry((parse_qs(parsed.query).get("h") or [""])[0])
+            self._send(200 if entry else 404, json.dumps(entry or {"ok": False}, ensure_ascii=False),
+                       "application/json; charset=utf-8", {"Cache-Control": "no-store"})
             return
         if parsed.path == "/markets":
             text = fetch_markets()
@@ -3209,7 +3299,7 @@ def main():
         # and only a reboot cleared it.
         ThreadingHTTPServer.daemon_threads = True
         ThreadingHTTPServer.request_queue_size = 128
-        httpd = ThreadingHTTPServer((host, PORT), Handler)
+        httpd = dlupdate.bind_with_retry(lambda: ThreadingHTTPServer((host, PORT), Handler))
     except OSError as e:
         print("  [!] Could not start on port %d." % PORT)
         print("      Another program may be using it.")

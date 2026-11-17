@@ -1457,6 +1457,33 @@
     .status-pills .pill span.lbl { display:none; }
   }
 
+
+  /* ---- Shabbat band: takes the markets strip's place in Shabbat mode ---- */
+  .shabbat-band { display:none; }
+  body.shabbat-mode .shabbat-band {
+    flex:0 0 auto; margin:6px 18px 0; display:flex; gap:10px; align-items:stretch; min-width:0;
+  }
+  .sb-card {
+    flex:1 1 0; min-width:0; padding:9px 14px; border:1px solid var(--line); border-radius:10px;
+    background:linear-gradient(180deg, rgba(251,191,36,0.07), transparent); color:var(--ink-2); font-size:13px;
+  }
+  .sb-card.sb-parsha { flex:0.9 1 0; }
+  .sb-card.sb-yom { flex:1.6 1 0; }
+  .sb-k { font-size:11.5px; color:var(--muted); font-weight:600; margin-bottom:3px; }
+  .sb-big { font-size:22px; font-weight:800; color:var(--news); line-height:1.15; }
+  .sb-sub { font-size:12.5px; color:var(--ink-2); margin-top:3px; }
+  .sb-times { display:grid; grid-template-columns:repeat(3, auto); gap:2px 16px; justify-content:start; }
+  .sb-times span { white-space:nowrap; } .sb-times b { color:var(--ink); font-family:'JetBrains Mono', monospace; margin-inline-start:5px; }
+  .sb-study { display:grid; grid-template-columns:auto 1fr; gap:1px 10px; }
+  .sb-study dt { color:var(--muted); } .sb-study dd { color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .sb-yom-text { color:var(--ink); font-size:14px; line-height:1.45; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+  .sb-yom a { color:var(--live); }
+
+  #settingsBtn.has-update { position:relative; }
+  #settingsBtn.has-update::after { content:''; position:absolute; top:4px; inset-inline-end:4px; width:8px; height:8px;
+    border-radius:50%; background:var(--news); box-shadow:0 0 8px var(--news); }
+  .upd-notes { white-space:pre-wrap; font:12px/1.5 Assistant, sans-serif; color:var(--ink-2); background:var(--bg-2);
+    border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin:6px 0; max-height:160px; overflow:auto; }
   /* ============================================================
      THEMES (settings -> תצוגה -> עיצוב). "classic" = no class.
      Only colours, borders, type and corners change; the layout never does.
@@ -1524,7 +1551,7 @@
     </div>
     <div class="brand-text">
       <div class="brand-title"><span class="live-dot" id="sysDot"></span>חדר <span style="color:var(--live)">מצב</span></div>
-      <div class="brand-sub" id="brandSub">DISPATCH LIVE · IL <b class="build-tag" title="גרסת הקבצים שרצה כרגע — אם אחרי עדכון המספר לא השתנה, מוגשת גרסה ישנה">v17.11-84</b></div>
+      <div class="brand-sub" id="brandSub">DISPATCH LIVE · IL <b class="build-tag" title="גרסת הקבצים שרצה כרגע — אם אחרי עדכון המספר לא השתנה, מוגשת גרסה ישנה">v17.11-85</b></div>
     </div>
   </div>
 
@@ -1595,6 +1622,7 @@
 
 <!-- LIFE INDICATORS — full-width layer between the topbar and the panels -->
 <div class="life-strip" id="lifeStrip"></div>
+<div class="shabbat-band" id="shabbatBand" aria-label="שבת"></div>
 
 <!-- LIVE TRAFFIC MAP — Waze's official embed channel. No scraping, no
      tokens, no hidden browser: the deck's own browser renders it, exactly as
@@ -2262,6 +2290,93 @@ async function refreshShabbat() {
     checkAutoShabbat();
   } catch (e) { /* leave placeholders */ }
 }
+
+// ---- Shabbat band (Shabbat mode) ----
+// Parasha and Haftarah (Hebcal), the day's times (Hebcal zmanim), the day's
+// study portions (Chabad.org's daily-study feed, for the Shabbat date), and
+// Hayom Yom: its text is not published in a form a program may read, so it is
+// shown from a local file the owner supplies (hayomyom.json, never in the
+// repository), and otherwise as the day's heading with a link.
+const NAVI_HE = { Joshua:'יהושע', Judges:'שופטים', 'I Samuel':'שמואל א', 'II Samuel':'שמואל ב', 'I Kings':'מלכים א',
+  'II Kings':'מלכים ב', Isaiah:'ישעיהו', Jeremiah:'ירמיהו', Ezekiel:'יחזקאל', Hosea:'הושע', Joel:'יואל', Amos:'עמוס',
+  Obadiah:'עובדיה', Jonah:'יונה', Micah:'מיכה', Nahum:'נחום', Habakkuk:'חבקוק', Zephaniah:'צפניה', Haggai:'חגי',
+  Zechariah:'זכריה', Malachi:'מלאכי' };
+function haftaraHe(s) {
+  return String(s || '').split(/;\s*/).map(part => {
+    const m = /^([A-Za-z ]+?)\s+(\d.*)$/.exec(part.trim());
+    return m ? (NAVI_HE[m[1]] || m[1]) + ' ' + m[2].replace(/-/g, '–') : part;
+  }).join(' · ');
+}
+const HE_MONTH = { Tishrei:'תשרי', Cheshvan:'חשוון', Kislev:'כסלו', Tevet:'טבת', "Sh'vat":'שבט', Shvat:'שבט', Adar:'אדר',
+  'Adar I':'אדר א׳', 'Adar II':'אדר ב׳', Nisan:'ניסן', Iyyar:'אייר', Sivan:'סיוון', Tamuz:'תמוז', Av:'אב', Elul:'אלול' };
+function heDay(n) {             // 1..30 in Hebrew numerals, with geresh / gershayim
+  const ones = ['', 'א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ז', 'ח', 'ט'], tens = ['', 'י', 'כ', 'ל'];
+  let t = n === 15 ? 'טו' : n === 16 ? 'טז' : tens[Math.floor(n / 10)] + ones[n % 10];
+  return t.length > 1 ? t.slice(0, -1) + '״' + t.slice(-1) : t + '׳';
+}
+function hdateHe(h) {           // "11 Kislev 5787" -> "י״א כסלו"
+  const m = /^(\d{1,2})\s+(.+?)\s+\d{4}$/.exec(String(h || '').trim());
+  return m && HE_MONTH[m[2]] ? heDay(+m[1]) + ' ' + HE_MONTH[m[2]] : String(h || '');
+}
+function shabbatDate() {            // the Saturday this Shabbat falls on (local)
+  const d = new Date(); const add = (6 - d.getDay() + 7) % 7;
+  d.setDate(d.getDate() + add); return d;
+}
+const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+let _sbLoaded = 0;
+async function refreshShabbatBand(force) {
+  if (!state.shabbatMode) return;
+  if (!force && Date.now() - _sbLoaded < 30 * 60e3) return;
+  _sbLoaded = Date.now();
+  const sat = shabbatDate(), q = 'latitude=' + geo.lat + '&longitude=' + geo.lng + '&tzid=' + encodeURIComponent(geo.tz || 'Asia/Jerusalem');
+  const out = { parsha: '', haftara: '', hdate: '', candles: '', havdala: '', z: {}, study: [], yom: null };
+  const jobs = [
+    proxyText('https://www.hebcal.com/shabbat?cfg=json&' + q + '&b=18&M=on&leyning=on&gy=' + sat.getFullYear() + '&gm=' + (sat.getMonth() + 1) + '&gd=' + sat.getDate())
+      .then(t => { for (const it of JSON.parse(t).items || []) {
+        const hm = /T(\d{2}:\d{2})/.exec(it.date || '');     // from the ISO time: the title may be 12-hour
+        if (it.category === 'parashat') { out.parsha = it.hebrew || it.title; out.hdate = it.hdate || ''; out.haftara = haftaraHe(it.leyning && it.leyning.haftarah); }
+        if (it.category === 'candles' && hm) out.candles = hm[1];
+        if (it.category === 'havdalah' && hm) out.havdala = hm[1];
+      } }).catch(() => {}),
+    proxyText('https://www.hebcal.com/zmanim?cfg=json&' + q + '&date=' + ymd(sat))
+      .then(t => { const z = JSON.parse(t).times || {}; const hm = v => v ? String(v).slice(11, 16) : '';
+        out.z = { shma: hm(z.sofZmanShma), chatzot: hm(z.chatzot), sunset: hm(z.sunset) }; }).catch(() => {}),
+    proxyText('https://he.chabad.org/tools/rss/dailystudy_rss.xml?tdate=' + (sat.getMonth() + 1) + '/' + sat.getDate() + '/' + sat.getFullYear())
+      .then(t => {
+        const doc = new DOMParser().parseFromString(t, 'text/xml');
+        const items = [...doc.querySelectorAll('item')].map(it => ({ t: it.querySelector('title')?.textContent || '', d: it.querySelector('description')?.textContent || '' }));
+        const pick = (re, label, clean) => { const it = items.find(x => re.test(x.t)); if (it) out.study.push([label, clean(it.d)]); };
+        const strip = s => s.replace(/^Today'?s (Lessons?|Psalms|Tehillim|Lesson):\s*/i, '').trim();
+        pick(/^Daily Chumash/, 'חומש', s => s.replace(/^Parshat\s*/, '').replace(/\s*\(.*\)\s*/, ' ').replace(/\s*with Rashi\s*$/, '').trim());
+        pick(/^Daily Tehilim - Psalms \(Hebrew\)|^Daily Tehilim/, 'תהילים', strip);
+        pick(/^Daily Tanya/, 'תניא', strip);
+        pick(/^Daily Rambam - 1 Chapter/, 'רמב״ם', strip);
+        pick(/^Daily Mitzvah/, 'ספר המצוות', strip);
+      }).catch(() => {}),
+  ];
+  await Promise.all(jobs);
+  if (out.hdate) {          // the Hebrew date comes from Hebcal above
+    try { const r = await tfetch('/hayomyom?h=' + encodeURIComponent(out.hdate), { cache: 'no-store' }); if (r.ok) out.yom = await r.json(); } catch {}
+  }
+  renderShabbatBand(out, sat);
+}
+function renderShabbatBand(o, sat) {
+  const band = $('shabbatBand'); if (!band) return;
+  const t = (k, v) => v ? `<span>${k}<b>${esc(v)}</b></span>` : '';
+  const link = 'https://he.chabad.org/dailystudy/hayomyom.asp?tdate=' + (sat.getMonth() + 1) + '/' + sat.getDate() + '/' + sat.getFullYear();
+  const yom = o.yom && o.yom.text
+    ? `<div class="sb-yom-text">${esc(o.yom.text)}</div>`
+    : `<div class="sb-sub">לפתגם של היום: <a href="${link}" target="_blank" rel="noopener">היום יום ב-chabad.org</a></div>`;
+  band.innerHTML = `
+    <div class="sb-card sb-parsha"><div class="sb-k">שבת קודש${o.hdate ? ' · ' + esc(hdateHe(o.hdate)) : ''}</div>
+      <div class="sb-big">${esc(o.parsha || 'שבת שלום')}</div>${o.haftara ? `<div class="sb-sub">הפטרה: ${esc(o.haftara).replace(/[\d:–]+/g, m => `<span dir="ltr">${m}</span>`)}</div>` : ''}</div>
+    <div class="sb-card"><div class="sb-k">זמני השבת</div><div class="sb-times">
+      ${t('הדלקת נרות', o.candles)}${t('סוף ק״ש', o.z.shma)}${t('חצות', o.z.chatzot)}${t('שקיעה', o.z.sunset)}${t('צאת השבת', o.havdala)}</div></div>
+    <div class="sb-card"><div class="sb-k">שיעורי היום</div>
+      ${o.study.length ? `<dl class="sb-study">${o.study.map(([k, v]) => `<dt>${k}</dt><dd title="${esc(v)}">${esc(v)}</dd>`).join('')}</dl>` : '<div class="sb-sub">לא זמין כרגע</div>'}</div>
+    <div class="sb-card sb-yom"><div class="sb-k">היום יום${o.hdate ? ' · ' + esc(hdateHe(o.hdate)) : ''}</div>${yom}</div>`;
+}
+setInterval(() => refreshShabbatBand(false), 5 * 60e3);
 
 // Auto-enter Shabbat mode 10 minutes after the local candle-lighting time
 // (only if the user didn't already turn it on). Runs on a timer so it triggers
@@ -5073,6 +5188,9 @@ function renderSettings(resp) {
   const tr = c.traffic;
   body.innerHTML = `
     ${resp.writable ? '' : '<div class="hl-err">אפשר לשנות הגדרות רק מהמחשב שמריץ את המערכת (localhost). כאן ההגדרות מוצגות לקריאה בלבד.</div>'}
+    <h3>עדכון גרסה</h3>
+    <div id="updBox" class="set-help">בודק אם יש גרסה חדשה…</div>
+
     <h3>בית</h3>
     <div class="set-row">
       <label>יישוב <select id="setCity">${CITY_PICK.map(([n]) => opt(n === 'זיהוי אוטומטי' ? '' : n, n, (n === 'זיהוי אוטומטי' ? '' : n) === city)).join('')}</select></label>
@@ -5138,6 +5256,7 @@ function renderSettings(resp) {
   });
   _setPrev = { tv: j(p['dl-tv'], null), off: j(p['dl-news-off'], []) };
   _setBase = collectSettings();
+  loadUpdate(false, resp.writable);
 }
 function collectSettings() {
   const city = $('setCity').value;
@@ -5214,6 +5333,67 @@ function applyPrefsLocally(prefs, onlyGiven) {     // the file is saved; make th
   }
   try { LS_RAW.rem.call(localStorage, 'dl-ipgeo'); } catch {}
 }
+// ---- one-click update (server: dlupdate.py) ----
+async function updateStatus(force) {
+  const r = await tfetch('/update/status' + (force ? '?force=1' : ''), { cache: 'no-store' }, 40000);
+  return r.json();
+}
+async function loadUpdate(force, writable) {
+  const box = $('updBox'); if (!box) return;
+  box.textContent = 'בודק אם יש גרסה חדשה…';
+  let u;
+  try { u = await updateStatus(force); } catch { box.textContent = 'הבדיקה נכשלה: אין תשובה מהשרת.'; return; }
+  const can = writable && u.writable;
+  const back = (u.backups || [])[0];
+  let html = '';
+  if (!u.ok) html = `<div>מותקנת גרסה <b>${esc(u.current)}</b>. ${esc(u.message || '')}</div>`;
+  else if (u.newer) {
+    const notes = String(u.notes || '').split('\n').filter(l => l.trim()).slice(0, 8).join('\n');
+    html = `<div>יש גרסה חדשה: <b>${esc(u.latest)}</b> (מותקנת ${esc(u.current)}).</div>
+      ${notes ? `<pre class="upd-notes">${esc(notes)}</pre>` : ''}
+      <button class="set-btn" id="updApply"${can ? '' : ' disabled'}>עדכן עכשיו</button>
+      <span class="sys-meta">ההגדרות, המפתחות והנתונים נשמרים; הגרסה הנוכחית נשמרת לגיבוי.</span>`;
+  } else html = `<div>מותקנת הגרסה האחרונה: <b>${esc(u.current)}</b>.</div>`;
+  html += `<div style="margin-top:6px"><button class="set-btn" id="updCheck">בדוק שוב</button>
+    ${back ? `<button class="set-btn" id="updBack"${can ? '' : ' disabled'}>חזרה לגרסה ${esc(back)}</button>` : ''}</div>`;
+  if (!can) html += '<div class="sys-meta">עדכון אפשרי רק מהמחשב שמריץ את המערכת.</div>';
+  box.innerHTML = html;
+  $('updCheck').onclick = () => loadUpdate(true, writable);
+  if ($('updApply')) $('updApply').onclick = () => runUpdate('/update/apply');
+  if ($('updBack')) $('updBack').onclick = () => runUpdate('/update/rollback');
+}
+async function runUpdate(path) {
+  const box = $('updBox');
+  if (state.alertActive || stayRunning()) { box.insertAdjacentHTML('beforeend', '<div class="hl-err">לא מעדכנים בזמן התרעה או שהייה במרחב המוגן.</div>'); return; }
+  box.innerHTML = '<div>מוריד ומתקין…</div>';
+  let res;
+  try {
+    const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    res = await r.json();
+  } catch { res = { ok: false, message: 'אין תשובה מהשרת' }; }
+  if (!res.ok) { box.innerHTML = `<div class="hl-err">${esc(res.message || 'העדכון נכשל')}</div>`; return; }
+  box.innerHTML = `<div>הותקנה גרסה <b>${esc(res.to)}</b>${res.changed && res.changed.length ? ' (' + esc(res.changed.join(', ')) + ')' : ''}. השרת עולה מחדש…</div>`
+    + (res.launchers && res.launchers.length ? `<div class="sys-meta">גם קובצי ההפעלה השתנו (${esc(res.launchers.join(', '))}). הם לא מוחלפים בזמן ריצה: להחלפתם, חלצו את קובץ ה-zip של הגרסה.</div>` : '');
+  const t0 = Date.now();
+  const wait = async () => {
+    try { const u = await updateStatus(false); if (u.current === res.to) { location.reload(); return; } } catch {}
+    if (Date.now() - t0 < 90e3) setTimeout(wait, 1500);
+    else box.insertAdjacentHTML('beforeend', '<div class="hl-err">השרת לא חזר תוך דקה וחצי. אם הוא לא עלה, הפעילו אותו מחדש מקובץ ההפעלה.</div>');
+  };
+  setTimeout(wait, 2500);
+}
+// a dot on the settings button when a newer version is out (this computer only)
+async function checkForUpdateQuietly() {
+  if (IS_RECEIVER) return;
+  try {
+    const u = await updateStatus(false);
+    const b = $('settingsBtn');
+    if (b) { b.classList.toggle('has-update', !!(u.ok && u.newer && u.writable)); if (u.ok && u.newer) b.title = 'הגדרות · יש גרסה חדשה: ' + u.latest; }
+  } catch {}
+}
+setTimeout(checkForUpdateQuietly, 30e3);
+setInterval(checkForUpdateQuietly, 6 * 3600e3);
+
 async function openSettings() {
   $('settingsOverlay').hidden = false; $('setMsg').textContent = '';
   $('settingsBody').innerHTML = '<div class="sys-meta">טוען…</div>';
@@ -5298,7 +5478,7 @@ document.addEventListener('keydown', e => {
   if (!$('archiveOverlay').hidden) $('archiveOverlay').hidden = true;
 });
 
-const DL_BUILD = '17.11-84';
+const DL_BUILD = '17.11-85';
 console.log('%cDispatch LIVE build ' + DL_BUILD, 'color:#22d3ee;font-weight:bold');
 const TENSION_W = { alerts: 0.50, idf: 0.20, news: 0.30 };  // component weights
 const TENSION_BASELINE = 12;   // structural background level for Israel
@@ -5688,6 +5868,7 @@ function applyShabbatMode() {
   }
   renderTV();
   renderNews();
+  if (on) refreshShabbatBand(true);
   pushState();
 }
 $('shabbatBtn').addEventListener('click', () => {

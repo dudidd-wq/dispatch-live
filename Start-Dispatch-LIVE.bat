@@ -66,9 +66,20 @@ echo.
 
 REM --- Run the server. It opens the browser itself once it's listening. ---
 REM     Closing this window stops the app.
+REM DL_RESTART=loop: after a one-click update the server exits with code 75
+REM and is run again here, in this window, with the updated files.
+set "DL_RESTART=loop"
+:serve
 !RUN!
 REM keep the server's exit code: the commands below overwrite errorlevel
 set "SRVEXIT=!errorlevel!"
+if "!SRVEXIT!"=="75" (
+  echo.
+  echo  [OK] Updated - restarting the server...
+  set "NOOPEN=1"
+  set "DL_RESTARTED=1"
+  goto serve
+)
 
 REM The deck has stopped - take the Traffic Brain down with it.
 echo.

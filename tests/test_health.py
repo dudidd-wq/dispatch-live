@@ -522,3 +522,31 @@ class TestCertificates(unittest.TestCase):
         finally:
             server.urlopen = real
         self.assertEqual(calls, [server._SSL_CTX])
+
+
+class TestHayomYomFile(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        self._root = server.ROOT
+        server.ROOT = tempfile.mkdtemp()
+        server._hayom_cache.update(mtime=None, data={})
+
+    def tearDown(self):
+        server.ROOT = self._root
+
+    def test_no_file_means_no_entry(self):
+        self.assertIsNone(server.hayomyom_entry("11 Kislev 5787"))
+
+    def test_lookup_by_hebcal_date_and_bad_files(self):
+        import json as _j, os as _o
+        p = _o.path.join(server.ROOT, "hayomyom.json")
+        with open(p, "w", encoding="utf-8") as f:
+            _j.dump({"11 Kislev": "sample", "1  Adar II": "x"}, f)
+        self.assertEqual(server.hayomyom_entry("11 Kislev 5787")["text"], "sample")
+        self.assertEqual(server.hayomyom_entry("1 Adar II 5787")["text"], "x")
+        self.assertIsNone(server.hayomyom_entry("12 Kislev 5787"))
+        with open(p, "w", encoding="utf-8") as f:
+            f.write("not json")
+        _o.utime(p, (1, 1))
+        self.assertIsNone(server.hayomyom_entry("11 Kislev 5787"))       # a broken file is ignored
+        self.assertIsNone(server.static_path("/hayomyom.json"))          # and never served as a file

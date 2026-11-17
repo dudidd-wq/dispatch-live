@@ -22,6 +22,7 @@ import math
 import os
 import random
 import socketserver
+import sys
 import ssl
 import threading
 import time
@@ -802,6 +803,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def do_POST(self):
+        # Restart into updated code (asked by the deck server after an update).
+        # The custom header forces a browser preflight, which this server does
+        # not answer, so a web page cannot trigger it.
+        if self.path.split("?")[0] == "/restart" and self.headers.get("X-DL-Restart") == "1":
+            with _lock:
+                _save()
+            self._send({"ok": True})
+            import dlupdate
+            dlupdate.restart(sys.argv, pythonw_ok=True)
+            return
+        self.send_error(404)
+
     def do_GET(self):
         path = self.path.split("?")[0]
         query = self.path.split("?")[1] if "?" in self.path else ""
@@ -881,7 +895,12 @@ def main():
     print("")
     # This machine only. The deck is the brain's single client, and /verify and
     # /trigger spend money: they have no business being reachable from the LAN.
-    Server(("127.0.0.1", PORT), Handler).serve_forever()
+    try:
+        import dlupdate
+        srv = dlupdate.bind_with_retry(lambda: Server(("127.0.0.1", PORT), Handler))
+    except ImportError:                    # an older install without the updater
+        srv = Server(("127.0.0.1", PORT), Handler)
+    srv.serve_forever()
 
 
 if __name__ == "__main__":

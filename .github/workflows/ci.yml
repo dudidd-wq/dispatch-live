@@ -64,7 +64,7 @@ jobs:
         if: steps.exists.outputs.yes == 'false'
         run: |
           mkdir -p out/dispatch-live-app
-          cp index.html server.py brain.py dlconfig.py dlarchive.py *.bat *.sh *.command README.md CHANGELOG.md out/dispatch-live-app/
+          cp index.html server.py brain.py dlconfig.py dlarchive.py dlupdate.py *.bat *.sh *.command README.md CHANGELOG.md out/dispatch-live-app/
           cp -r docs out/dispatch-live-app/docs
           (cd out && zip -qr "../dispatch-live-${{ steps.v.outputs.tag }}.zip" dispatch-live-app)
           # release notes = this build's section of the changelog (exact heading match)

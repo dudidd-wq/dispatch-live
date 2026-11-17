@@ -42,8 +42,19 @@ echo  NOTE: the first time, Windows may pop a Firewall prompt.
 echo        Tick "Private networks" and click "Allow access".
 echo.
 
+REM DL_RESTART=loop: after a one-click update the server exits with code 75
+REM and is run again here, in this window, with the updated files.
+set "DL_RESTART=loop"
+:serve
 !RUN!
 set "SRVEXIT=!errorlevel!"
+if "!SRVEXIT!"=="75" (
+  echo.
+  echo  [OK] Updated - restarting the server...
+  set "NOOPEN=1"
+  set "DL_RESTARTED=1"
+  goto serve
+)
 
 REM The deck has stopped - take the Traffic Brain down with it.
 set "BRAINPID="
