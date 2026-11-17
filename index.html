@@ -910,6 +910,40 @@
     box-shadow:0 30px 90px rgba(0,0,0,0.7);
   }
   .traffic-overlay[hidden] { display:none; }
+  /* health + settings panels share the overlay frame */
+  .sys-overlay { inset:6% 14%; }
+  @media (max-width:1100px) { .sys-overlay { inset:3% 3%; } }
+  .sys-body { flex:1 1 auto; overflow:auto; padding:14px 18px 20px; font-family:'Assistant','Rubik',sans-serif; font-size:13.5px; color:var(--ink-2); }
+  .sys-body h3 { margin:18px 0 8px; font-size:13px; font-weight:800; color:var(--ink); letter-spacing:0.02em; }
+  .sys-body h3:first-child { margin-top:2px; }
+  .sys-meta { font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--subtle); }
+  .hl-table { width:100%; border-collapse:collapse; }
+  .hl-table td { padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  .hl-table td.num { font-family:'JetBrains Mono',monospace; font-size:11.5px; white-space:nowrap; color:var(--subtle); }
+  .hl-dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-inline-end:7px; background:#64748b; }
+  .hl-dot.ok { background:var(--ok); } .hl-dot.down { background:var(--alert); } .hl-dot.stale, .hl-dot.info { background:#eab308; }
+  .hl-err { color:#fca5a5; font-size:12px; }
+  .pill.health { cursor:pointer; }
+  .pill.health .dot { background:#64748b; }
+  .pill.health.h-ok .dot { background:var(--ok); box-shadow:0 0 8px var(--ok); }
+  .pill.health.h-warn .dot { background:#eab308; box-shadow:0 0 8px #eab308; }
+  .pill.health.h-bad { border-color:var(--alert); }
+  .pill.health.h-bad .dot { background:var(--alert); box-shadow:0 0 10px var(--alert); }
+  .set-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); gap:4px 14px; }
+  .set-grid label, .set-row label { display:flex; align-items:center; gap:7px; cursor:pointer; }
+  .set-row { display:flex; flex-wrap:wrap; gap:10px 22px; align-items:center; margin:6px 0; }
+  .set-row .cap { color:var(--subtle); font-size:12px; }
+  .sys-body input[type=number], .sys-body input[type=text], .sys-body select, .sys-body textarea {
+    background:rgba(255,255,255,0.05); border:1px solid var(--line); border-radius:7px;
+    color:var(--ink); padding:5px 8px; font-family:inherit; font-size:13px; }
+  .sys-body input[type=number] { width:86px; }
+  .sys-body textarea { width:100%; min-height:64px; direction:ltr; text-align:left; font-family:'JetBrains Mono',monospace; font-size:12px; }
+  .set-help { color:var(--subtle); font-size:12px; margin:3px 0 0; }
+  .set-foot { display:flex; gap:8px; align-items:center; padding:10px 14px; border-top:1px solid var(--line); }
+  .set-btn { background:rgba(255,255,255,0.06); border:1px solid var(--line); color:var(--ink-2); border-radius:8px; padding:6px 14px; font-size:13px; font-family:inherit; cursor:pointer; }
+  .set-btn.primary { background:var(--live); border-color:var(--live); color:#04121a; font-weight:800; }
+  .set-btn:disabled { opacity:0.45; cursor:default; }
+  .set-msg { font-size:12.5px; color:var(--subtle); }
   .tro-head {
     display:flex; align-items:center; gap:10px;
     padding:10px 14px; border-bottom:1px solid var(--line);
@@ -1415,7 +1449,7 @@
     </div>
     <div class="brand-text">
       <div class="brand-title"><span class="live-dot" id="sysDot"></span>חדר <span style="color:var(--live)">מצב</span></div>
-      <div class="brand-sub" id="brandSub">DISPATCH LIVE · IL <b class="build-tag" title="גרסת הקבצים שרצה כרגע — אם אחרי עדכון המספר לא השתנה, מוגשת גרסה ישנה">v15.11-73</b></div>
+      <div class="brand-sub" id="brandSub">DISPATCH LIVE · IL <b class="build-tag" title="גרסת הקבצים שרצה כרגע — אם אחרי עדכון המספר לא השתנה, מוגשת גרסה ישנה">v17.11-74</b></div>
     </div>
   </div>
 
@@ -1462,6 +1496,9 @@
       <button class="icon-btn" id="castBtn" title="שידור למסך / טלוויזיה">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 16.1A5 5 0 0 1 5.9 20M2 12.05A9 9 0 0 1 9.95 20M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6"/><line x1="2" y1="20" x2="2.01" y2="20"/></svg>
       </button>
+      <button class="icon-btn" id="settingsBtn" title="הגדרות">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
       <button class="icon-btn" id="fsBtn" title="מסך מלא">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
       </button>
@@ -1472,6 +1509,7 @@
       </span>
       <span class="pill tv"><span class="dot"></span><span class="lbl">TV</span> <b id="tvCount">0</b></span>
       <span class="pill news"><span class="dot"></span><span class="lbl">NEWS</span> <b id="newsCount">0</b></span>
+      <span class="pill health" id="healthPill" title="בריאות מקורות המידע — לחיצה לפירוט"><span class="dot"></span><span class="lbl">מקורות</span> <b id="healthVal">--</b></span>
       <span class="pill alert" id="alertPill"><span class="dot"></span><span class="lbl">צופר</span> <b id="alertState">שקט</b></span>
     </div>
   </div>
@@ -1591,9 +1629,94 @@
   </div>
 </div>
 
+<div class="traffic-overlay sys-overlay" id="healthOverlay" hidden>
+  <div class="tro-head">
+    <span class="tro-title">בריאות המערכת</span>
+    <span class="tro-sub" id="healthSub"></span>
+    <span class="spacer"></span>
+    <button class="tro-close" id="healthRun">הרץ בדיקה עכשיו</button>
+    <button class="tro-close" id="healthClose">סגור ✕</button>
+  </div>
+  <div class="sys-body" id="healthBody"></div>
+</div>
+
+<div class="traffic-overlay sys-overlay" id="settingsOverlay" hidden>
+  <div class="tro-head">
+    <span class="tro-title">הגדרות</span>
+    <span class="tro-sub">נשמר בקובץ config.local.json במחשב הזה</span>
+    <span class="spacer"></span>
+    <button class="tro-close" id="settingsClose">סגור ✕</button>
+  </div>
+  <div class="sys-body" id="settingsBody"></div>
+  <div class="set-foot">
+    <button class="set-btn primary" id="setSave">שמור והחל</button>
+    <button class="set-btn" id="setExport">ייצוא</button>
+    <button class="set-btn" id="setImport">ייבוא</button>
+    <button class="set-btn" id="setReset">איפוס לברירת מחדל</button>
+    <input type="file" id="setImportFile" accept="application/json,.json" hidden>
+    <span class="set-msg" id="setMsg"></span>
+  </div>
+</div>
+
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
+
+/* ============================================================
+   LOCAL CONFIGURATION
+   The server merges config.json + config.local.json and hands the result
+   over before anything else runs. Shared preferences are seeded into
+   localStorage so every browser and device shows the same setup; later
+   changes made through the deck's own controls are mirrored back to the
+   file. Only this computer may write (the server enforces it) - a phone
+   on the Wi-Fi reads the setup and keeps its own changes local.
+   ============================================================ */
+const DL_CFG = (() => {
+  try {
+    const x = new XMLHttpRequest();
+    x.open('GET', '/config', false);      // tiny, same machine, must finish before state is built
+    x.send();
+    if (x.status === 200) return JSON.parse(x.responseText);
+  } catch {}
+  return null;                            // file://, the APK, or an old server: built-in defaults
+})();
+const CFG = (DL_CFG && DL_CFG.config) || null;
+const CFG_SYNC_KEYS = ['dl-city','dl-lat','dl-lng','dl-shelter-sec','dl-tv','dl-featured','dl-featured2',
+                       'dl-news-off','dl-news-region','dl-news-relevant','dl-sound'];
+const LS_RAW = { set: Storage.prototype.setItem, rem: Storage.prototype.removeItem };
+(() => {
+  if (!CFG) return;
+  const prefs = CFG.prefs || {};
+  for (const k of CFG_SYNC_KEYS) {
+    try { if (prefs[k] != null) LS_RAW.set.call(localStorage, k, String(prefs[k])); } catch {}
+  }
+  if (!DL_CFG.writable) return;
+  const pending = {}; let timer = null;
+  const flush = () => {
+    timer = null;
+    const patch = { prefs: { ...pending } };
+    for (const k of Object.keys(pending)) delete pending[k];
+    fetch('/config', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                       body: JSON.stringify({ patch }) }).catch(() => {});
+  };
+  const queue = (k, v) => {
+    if (!CFG_SYNC_KEYS.includes(k)) return;
+    pending[k] = v;
+    if (!timer) timer = setTimeout(flush, 800);
+  };
+  Storage.prototype.setItem = function (k, v) { LS_RAW.set.call(this, k, v); if (this === localStorage) queue(k, String(v)); };
+  Storage.prototype.removeItem = function (k) { LS_RAW.rem.call(this, k); if (this === localStorage) queue(k, null); };
+  // one-time: what this browser already had becomes the file's starting point
+  try {
+    if (!localStorage.getItem('dl-cfg-migrated')) {
+      for (const k of CFG_SYNC_KEYS) {
+        const v = localStorage.getItem(k);
+        if (prefs[k] == null && v != null) queue(k, v);
+      }
+      LS_RAW.set.call(localStorage, 'dl-cfg-migrated', '1');
+    }
+  } catch {}
+})();
 const HE = /[\u0590-\u05FF]/;
 const isHe = s => HE.test(s || '');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -1647,6 +1770,11 @@ const CHANNELS = [
   { id:'ch10', name:'ערוץ 10', type:'hls',
     src:'https://r.il.cdn-redge.media/livehls/oil/calcala-live/live/channel10/live.livx/playlist.m3u8?renditions' },
 ];
+const BUILTIN_CHANNEL_IDS = CHANNELS.map(c => c.id);
+// channels added in the settings screen
+for (const c of ((CFG && CFG.channels && CFG.channels.custom) || [])) {
+  CHANNELS.push({ id: c.id, name: c.name, type: c.type === 'iframe' ? 'iframe' : 'hls', src: c.src, custom: true });
+}
 
 /* ============================================================
    NEWS SOURCES (subset of the full dispatch list, focused on
@@ -1675,6 +1803,16 @@ const NEWS_SOURCES = [
   { id:'nyt',    name:'New York Times', short:'NYT', accent:'#000000', region:'world', url:'https://rss.nytimes.com/services/xml/rss/nyt/World.xml' },
   { id:'dw',     name:'Deutsche Welle', short:'DW',  accent:'#0a78b6', region:'world', url:'https://rss.dw.com/rdf/rss-en-world' },
 ];
+// feeds added in the settings screen
+for (const f of ((CFG && CFG.news && CFG.news.custom) || [])) {
+  NEWS_SOURCES.push({ id: f.id, name: f.name, short: f.name.slice(0, 8).toUpperCase(), accent: '#64748b',
+                      region: f.region === 'world' ? 'world' : 'il', url: f.url, custom: true });
+}
+if (CFG && CFG.display && CFG.display.fontScale && CFG.display.fontScale !== 1) {
+  const st = document.createElement('style');
+  st.textContent = `.nr-head{font-size:${(13.5 * CFG.display.fontScale).toFixed(2)}px !important}`;
+  document.head.appendChild(st);
+}
 
 /* ============================================================
    STATE
@@ -3556,7 +3694,7 @@ function renderTrafficReport() {
       ${t.counts.free} זורמים${t.measured != null ? ` · ● ${t.measured} נמדדו · ○ ${t.predicted} צפי` : ''}
       ${t.checkedAt ? ' · אומת ' + esc(t.checkedAt) : ''}${md}${bm}</div>
     <div class="tr-legend">● נמדד מול גוגל &nbsp;·&nbsp; ○ צפי מהמודל הנלמד</div>${rows}
-    <div class="tr-note">עיכוב מתחת ל-10 דק׳ מסומן כזורם — לא מדווח כעומס.</div>${roadsHtml}`;
+    <div class="tr-note">עיכוב מתחת ל-${(t.thresholds && t.thresholds.minDelay) || 10} דק׳ מסומן כזורם — לא מדווח כעומס.</div>${roadsHtml}`;
 }
 function openTrafficMap() {
   const box = $('trafficOverlay');
@@ -3731,7 +3869,7 @@ function renderLifeStrip() {
     const more = t.hotspots.length > 1 ? `<i class="lf-mid">ועוד ${t.hotspots.length - 1}</i>` : '';
     // Google refusing us is not the same as "traffic is flowing": say so.
     const hf = t.health && t.health.failing ? t.health.error || {} : null;
-    const warn = hf ? `<i class="lf-dn" title="גוגל לא עונה (${hf.code || 'רשת'}): ${esc(hf.hint || '')} — ${esc(hf.msg || '')} · מדידה אחרונה: ${esc((t.health && t.health.lastOk) || 'אין')}">⚠ לא נמדד</i>` : '';
+    const warn = hf ? `<i class="lf-dn" title="גוגל לא עונה (${hf.code || 'רשת'}): ${esc(hf.hintHe || hf.hint || '')} — ${esc(hf.msg || '')} · מדידה אחרונה: ${esc((t.health && t.health.lastOk) || 'אין')}">⚠ לא נמדד</i>` : '';
     chips.push(`<span class="lf-chip lf-btn" data-traffic-open="1"
       title="דוח עומסים · נבדק ${esc(t.checkedAt || '')} · לחיצה לפירוט">🚗 ${head} ${more} ${warn}</span>`);
   } else if (state.trafficError === 'brain_down') {
@@ -4256,7 +4394,267 @@ function policyStripHtml() {
 // (each 0-100), blended with a fixed baseline, and boosted when all three
 // run hot together (convergence — the strongest signal there is).
 // Rule-based and fully local: no AI, no external services.
-const DL_BUILD = '15.11-73';
+/* ============================================================
+   SYSTEM HEALTH  (server /health)
+   One light in the header; the panel says which source is down, since
+   when, and why - and shows the last daily self-test.
+   ============================================================ */
+const sysHealth = { data: null, at: 0 };
+function agoHe(sec) {
+  if (sec == null) return '—';
+  if (sec < 90) return 'לפני ' + sec + ' שנ׳';
+  if (sec < 5400) return 'לפני ' + Math.round(sec / 60) + ' דק׳';
+  if (sec < 172800) return 'לפני ' + Math.round(sec / 3600) + ' שע׳';
+  return 'לפני ' + Math.round(sec / 86400) + ' ימים';
+}
+async function refreshSysHealth() {
+  try {
+    const r = await tfetch('/health', { cache: 'no-store' }, 8000);
+    sysHealth.data = await r.json(); sysHealth.at = Date.now();
+  } catch { sysHealth.data = null; }
+  renderHealthPill();
+  if (!$('healthOverlay').hidden) renderHealthPanel();
+}
+function renderHealthPill() {
+  const pill = $('healthPill'), d = sysHealth.data;
+  if (!pill) return;
+  pill.classList.remove('h-ok', 'h-warn', 'h-bad');
+  if (!d) { $('healthVal').textContent = '?'; pill.title = 'אין תשובה משרת המערכת'; return; }
+  const down = d.sources.filter(x => x.state === 'down');
+  const critical = down.filter(x => x.critical);
+  const stFail = (d.selftest && d.selftest.failed) || [];
+  const brainBad = d.brain && d.brain.up && d.brain.health && d.brain.health.failing;
+  const n = new Set([...down.map(x => x.label), ...stFail]).size + (brainBad ? 1 : 0);
+  pill.classList.add(critical.length ? 'h-bad' : n ? 'h-warn' : 'h-ok');
+  $('healthVal').textContent = n ? String(n) : '✓';
+  pill.title = n ? 'מקורות בתקלה: ' + [...new Set([...down.map(x => x.label), ...stFail])].join(' · ') + ' — לחיצה לפירוט'
+                 : 'כל המקורות עונים — לחיצה לפירוט';
+}
+function renderHealthPanel() {
+  const d = sysHealth.data, body = $('healthBody');
+  if (!d) { body.innerHTML = '<div class="hl-err">אין תשובה מ-/health. ייתכן שרץ server.py ישן, או שהשרת נפל.</div>'; return; }
+  const up = d.uptimeSec < 5400 ? Math.round(d.uptimeSec / 60) + ' דק׳' : (d.uptimeSec / 3600).toFixed(1) + ' שע׳';
+  $('healthSub').textContent = `גרסה ${d.build} · השרת פעיל ${up} · ${d.threads} threads`;
+  const dot = st => `<span class="hl-dot ${st}"></span>`;
+  // one line per problem and per core source; healthy feeds are summarised
+  const okFeeds = d.sources.filter(h => h.id.startsWith('feed:') && h.state !== 'down');
+  const shown = d.sources.filter(h => !(h.id.startsWith('feed:') && h.state !== 'down'));
+  const feedsRow = okFeeds.length ? `<tr><td>${dot('ok')}${okFeeds.length} הזנות תקינות
+        <div class="sys-meta">${esc(okFeeds.map(h => h.label.replace('הזנה · ', '')).join(' · '))}</div></td>
+      <td class="num"></td><td class="num">${Math.round(okFeeds.reduce((a, h) => a + h.ms, 0) / okFeeds.length)} ms בממוצע</td><td class="num"></td></tr>` : '';
+  const srcRows = shown.map(h => `<tr>
+      <td>${dot(h.state)}${esc(h.label)}${h.critical ? ' <span class="sys-meta">קריטי</span>' : ''}
+        ${h.state === 'down' ? `<div class="hl-err">${esc(h.error || '')}${h.streak > 1 ? ' · ' + h.streak + ' כישלונות ברצף' : ''}</div>` : ''}</td>
+      <td class="num">${h.state === 'down' ? (h.okAgo == null ? 'לא ענה מאז ההפעלה' : 'תקין ' + agoHe(h.okAgo)) : agoHe(h.tryAgo)}</td>
+      <td class="num">${h.ms} ms</td>
+      <td class="num">${h.okCount} ✓ · ${h.failCount} ✗</td></tr>`).join('') + feedsRow;
+  const b = d.brain || {};
+  const brainLine = !b.up ? `${dot('down')}שירות התנועה לא רץ (brain.py, פורט 3200)`
+    : (b.health && b.health.failing)
+      ? `${dot('down')}Google דוחה מדידות: ${esc((b.health.error || {}).hintHe || (b.health.error || {}).hint || '')} <span class="hl-err">${esc((b.health.error || {}).msg || '')}</span> · מדידה תקינה אחרונה: ${esc(b.health.lastOk || 'אין')}`
+      : `${dot('ok')}פעיל · נבדק ${esc(b.checkedAt || '—')} · תקציב ${b.budget ? b.budget.usedMonth + ' / ' + b.budget.capMonth + ' החודש' : '—'}${b.budget && b.budget.state === 'no_key' ? ' · אין google.key' : ''}`;
+  const st = d.selftest || { results: [] };
+  const stRows = (st.results || []).map(r => `<tr>
+      <td>${dot(r.ok === true ? 'ok' : r.ok === false ? 'down' : 'info')}${esc(r.label)}</td>
+      <td>${r.ok === false ? `<span class="hl-err">${esc(r.detail)}</span>` : esc(r.detail)}</td>
+      <td class="num">${r.ms} ms</td></tr>`).join('');
+  body.innerHTML = `
+    <h3>מקורות מידע · לפי הבקשות האחרונות של המסך</h3>
+    ${srcRows ? `<table class="hl-table">${srcRows}</table>` : '<div class="sys-meta">עדיין לא נרשמו בקשות.</div>'}
+    <h3>שירות התנועה</h3><div>${brainLine}</div>
+    <h3>בדיקה עצמית · ${st.running ? 'רצה כעת…' : st.at ? agoHe(st.ago) : 'טרם רצה (רצה כדקה וחצי אחרי הפעלה, ואז פעם ביממה)'}</h3>
+    <div class="set-help">בודקת שכל מקור עדיין מחזיר את המבנה שהמסך יודע לקרוא. שינוי באתר של מקור מתגלה כאן.</div>
+    ${stRows ? `<table class="hl-table">${stRows}</table>` : ''}`;
+}
+function openHealth() { $('healthOverlay').hidden = false; renderHealthPanel(); refreshSysHealth(); }
+$('healthPill').addEventListener('click', openHealth);
+$('healthClose').addEventListener('click', () => { $('healthOverlay').hidden = true; });
+$('healthRun').addEventListener('click', async () => {
+  $('healthRun').disabled = true; $('healthRun').textContent = 'בודק…';
+  try { await tfetch('/selftest?run=1', { cache: 'no-store' }, 8000); } catch {}
+  for (let i = 0; i < 20; i++) {
+    await new Promise(r => setTimeout(r, 2500));
+    await refreshSysHealth();
+    if (sysHealth.data && sysHealth.data.selftest && !sysHealth.data.selftest.running && sysHealth.data.selftest.ago < 60) break;
+  }
+  $('healthRun').disabled = false; $('healthRun').textContent = 'הרץ בדיקה עכשיו';
+});
+setTimeout(refreshSysHealth, 6000);
+setInterval(refreshSysHealth, 60000);
+
+/* ============================================================
+   SETTINGS SCREEN  (writes config.local.json through POST /config)
+   ============================================================ */
+function parseLines(text, n) {
+  return String(text || '').split('\n').map(l => l.split('|').map(x => x.trim())).filter(a => a[0] && a.length >= n);
+}
+function renderSettings(resp) {
+  const c = resp.config, p = c.prefs || {}, body = $('settingsBody');
+  const j = (v, d) => { try { return v == null ? d : JSON.parse(v); } catch { return d; } };
+  const tvOn = new Set(j(p['dl-tv'], CHANNELS.map(x => x.id)));
+  const newsOff = new Set(j(p['dl-news-off'], []));
+  const opt = (v, t, sel) => `<option value="${esc(v)}"${sel ? ' selected' : ''}>${esc(t)}</option>`;
+  const chOpts = cur => opt('', 'אוטומטי', !cur) + CHANNELS.map(x => opt(x.id, x.name, x.id === cur)).join('');
+  const city = p['dl-city'] || '';
+  const tr = c.traffic;
+  body.innerHTML = `
+    ${resp.writable ? '' : '<div class="hl-err">אפשר לשנות הגדרות רק מהמחשב שמריץ את המערכת (localhost). כאן ההגדרות מוצגות לקריאה בלבד.</div>'}
+    <h3>בית</h3>
+    <div class="set-row">
+      <label>יישוב <select id="setCity">${CITY_PICK.map(([n]) => opt(n === 'זיהוי אוטומטי' ? '' : n, n, (n === 'זיהוי אוטומטי' ? '' : n) === city)).join('')}</select></label>
+      <label>זמן כניסה למרחב מוגן (שניות) <input type="number" id="setShelter" min="0" max="600" value="${esc(p['dl-shelter-sec'] || '')}" placeholder="אוטומטי"></label>
+    </div>
+    <div class="set-help">היישוב קובע מזג אוויר, זמני שבת, איכות אוויר ואילו התרעות נחשבות "אצלי".</div>
+
+    <h3>ערוצים</h3>
+    <div class="set-grid">${CHANNELS.map(x => `<label><input type="checkbox" data-ch="${esc(x.id)}"${tvOn.has(x.id) ? ' checked' : ''}> ${esc(x.name)}${x.custom ? ' <span class="sys-meta">נוסף</span>' : ''}</label>`).join('')}</div>
+    <div class="set-row">
+      <label>ערוץ גדול ראשי <select id="setFeat1">${chOpts(p['dl-featured'])}</select></label>
+      <label>ערוץ גדול משני <select id="setFeat2">${chOpts(p['dl-featured2'])}</select></label>
+    </div>
+    <div class="set-help">ערוצים נוספים, שורה לכל ערוץ: <b>שם | כתובת</b>. כתובת m3u8 מנוגנת ישירות; כל כתובת אחרת מוטמעת כדף.</div>
+    <textarea id="setCustomCh" placeholder="שם הערוץ | https://example.com/live/playlist.m3u8">${esc((c.channels.custom || []).map(x => x.name + ' | ' + x.src).join('\n'))}</textarea>
+
+    <h3>חדשות</h3>
+    <div class="set-grid">${NEWS_SOURCES.map(x => `<label><input type="checkbox" data-src="${esc(x.id)}"${newsOff.has(x.id) ? '' : ' checked'}> ${esc(x.name)}${x.custom ? ' <span class="sys-meta">נוסף</span>' : ''}</label>`).join('')}</div>
+    <div class="set-row">
+      <label>אזור <select id="setRegion">${opt('all', 'הכול', (p['dl-news-region'] || 'all') === 'all')}${opt('il', 'ישראל', p['dl-news-region'] === 'il')}${opt('world', 'עולם', p['dl-news-region'] === 'world')}</select></label>
+      <label><input type="checkbox" id="setRelevant"${p['dl-news-relevant'] === '0' ? '' : ' checked'}> רק ידיעות רלוונטיות</label>
+      <label>גודל גופן <select id="setFont">${[0.9, 1, 1.1, 1.2, 1.35].map(v => opt(v, Math.round(v * 100) + '%', Math.abs(v - c.display.fontScale) < 0.01)).join('')}</select></label>
+      <label><input type="checkbox" id="setSound"${p['dl-sound'] === 'off' ? '' : ' checked'}> צליל התרעה</label>
+    </div>
+    <div class="set-help">מקורות RSS נוספים, שורה לכל מקור: <b>שם | כתובת RSS | il או world</b>.</div>
+    <textarea id="setCustomNews" placeholder="שם המקור | https://example.com/rss.xml | il">${esc((c.news.custom || []).map(x => x.name + ' | ' + x.url + ' | ' + x.region).join('\n'))}</textarea>
+
+    <h3>תנועה</h3>
+    <div class="set-row">
+      <label>עיכוב שמדווח כעומס, מ- <input type="number" id="setMinDelay" min="1" max="120" value="${tr.minDelay}"> דק׳</label>
+      <label>עומס כבד, מ- <input type="number" id="setHeavy" min="2" max="240" value="${tr.heavyDelay}"> דק׳</label>
+      <label>שעות עומס <input type="text" id="setRush" style="width:120px;direction:ltr" value="${esc(tr.rush.map(r => r[0] + '-' + r[1]).join(', '))}"></label>
+    </div>
+    <div class="set-row">
+      <label>תקרת קריאות לחודש <input type="number" id="setMonthly" min="0" max="${resp.ceiling}" value="${tr.monthlyCap}"></label>
+      <label>תקרה ליום <input type="number" id="setDaily" min="0" max="400" value="${tr.dailyCap}"></label>
+      <span class="cap">Google נותן ${resp.freeTier.toLocaleString()} קריאות חינם בחודש; המערכת לא מאפשרת תקרה מעל ${resp.ceiling.toLocaleString()}.</span>
+    </div>
+
+    <h3>פס המדדים</h3>
+    <div class="set-help">שורה לכל מדד: <b>סימול Yahoo Finance | שם לתצוגה</b>.</div>
+    <textarea id="setMarkets">${esc(c.markets.map(m => m[0] + ' | ' + m[1]).join('\n'))}</textarea>`;
+  $('setSave').disabled = !resp.writable; $('setImport').disabled = !resp.writable; $('setReset').disabled = !resp.writable;
+}
+function collectSettings() {
+  const city = $('setCity').value;
+  const entry = CITY_PICK.find(x => x[0] === city);
+  const tv = [...document.querySelectorAll('#settingsBody [data-ch]')].filter(x => x.checked).map(x => x.dataset.ch);
+  const off = [...document.querySelectorAll('#settingsBody [data-src]')].filter(x => !x.checked).map(x => x.dataset.src);
+  const num = id => { const v = parseFloat($(id).value); return isNaN(v) ? null : v; };
+  const shelter = num('setShelter');
+  const rush = $('setRush').value.split(',').map(t => t.trim().split('-').map(n => parseInt(n, 10)))
+    .filter(a => a.length === 2 && a.every(n => !isNaN(n)));
+  return {
+    prefs: {
+      'dl-city': city && entry ? city : null,
+      'dl-lat': city && entry ? String(entry[1]) : null,
+      'dl-lng': city && entry ? String(entry[2]) : null,
+      'dl-shelter-sec': shelter ? String(Math.round(shelter)) : null,
+      'dl-tv': JSON.stringify(tv),
+      'dl-featured': $('setFeat1').value || null,
+      'dl-featured2': $('setFeat2').value || null,
+      'dl-news-off': JSON.stringify(off),
+      'dl-news-region': $('setRegion').value,
+      'dl-news-relevant': $('setRelevant').checked ? '1' : '0',
+      'dl-sound': $('setSound').checked ? 'on' : 'off',
+    },
+    channels: { custom: parseLines($('setCustomCh').value, 2).map(a => ({ name: a[0], src: a[1], type: /\.m3u8(\?|$)/i.test(a[1]) ? 'hls' : 'iframe' })) },
+    news: { custom: parseLines($('setCustomNews').value, 2).map(a => ({ name: a[0], url: a[1], region: a[2] === 'world' ? 'world' : 'il' })) },
+    markets: parseLines($('setMarkets').value, 2).map(a => [a[0], a[1]]),
+    traffic: { minDelay: num('setMinDelay'), heavyDelay: num('setHeavy'), monthlyCap: num('setMonthly'),
+               dailyCap: num('setDaily'), rush },
+    display: { fontScale: parseFloat($('setFont').value) || 1 },
+  };
+}
+async function postConfig(payload) {
+  const r = await fetch('/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  const d = await r.json().catch(() => ({ ok: false, message: 'תשובה לא תקינה מהשרת' }));
+  if (!d.ok) throw new Error(d.message || ('HTTP ' + r.status));
+  return d;
+}
+function applyPrefsLocally(prefs) {     // the file is saved; make this browser agree before reloading
+  for (const k of CFG_SYNC_KEYS) {
+    try { if (prefs[k] == null) LS_RAW.rem.call(localStorage, k); else LS_RAW.set.call(localStorage, k, String(prefs[k])); } catch {}
+  }
+  try { LS_RAW.rem.call(localStorage, 'dl-ipgeo'); } catch {}
+}
+async function openSettings() {
+  $('settingsOverlay').hidden = false; $('setMsg').textContent = '';
+  $('settingsBody').innerHTML = '<div class="sys-meta">טוען…</div>';
+  try {
+    const r = await fetch('/config', { cache: 'no-store' });
+    renderSettings(await r.json());
+  } catch {
+    $('settingsBody').innerHTML = '<div class="hl-err">השרת לא החזיר הגדרות (/config). ייתכן שרץ server.py ישן.</div>';
+    $('setSave').disabled = true;
+  }
+}
+$('settingsBtn').addEventListener('click', openSettings);
+$('settingsClose').addEventListener('click', () => { $('settingsOverlay').hidden = true; });
+$('setSave').addEventListener('click', async () => {
+  try {
+    const patch = collectSettings();
+    // a channel added just now should be visible without a second visit
+    const d = await postConfig({ patch });
+    const prefs = { ...patch.prefs };
+    const tv = new Set(JSON.parse(prefs['dl-tv'] || '[]'));
+    const before = new Set(CHANNELS.map(c => c.id));
+    for (const c of (d.config.channels.custom || [])) if (!before.has(c.id)) tv.add(c.id);
+    prefs['dl-tv'] = JSON.stringify([...tv]);
+    if (prefs['dl-tv'] !== patch.prefs['dl-tv']) await postConfig({ patch: { prefs: { 'dl-tv': prefs['dl-tv'] } } });
+    applyPrefsLocally(prefs);
+    $('setMsg').textContent = 'נשמר. טוען מחדש…';
+    setTimeout(() => location.reload(), 500);
+  } catch (e) { $('setMsg').textContent = 'לא נשמר: ' + e.message; }
+});
+$('setExport').addEventListener('click', async () => {
+  try {
+    const d = await (await fetch('/config', { cache: 'no-store' })).json();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(d.local, null, 2)], { type: 'application/json' }));
+    a.download = 'dispatch-config.json'; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  } catch (e) { $('setMsg').textContent = 'הייצוא נכשל: ' + e.message; }
+});
+$('setImport').addEventListener('click', () => $('setImportFile').click());
+$('setImportFile').addEventListener('change', async e => {
+  const f = e.target.files[0]; if (!f) return;
+  try {
+    const local = JSON.parse(await f.text());
+    const d = await postConfig({ local });
+    applyPrefsLocally(d.config.prefs || {});
+    $('setMsg').textContent = 'יובא. טוען מחדש…';
+    setTimeout(() => location.reload(), 500);
+  } catch (err) { $('setMsg').textContent = 'הייבוא נכשל: ' + err.message; }
+  e.target.value = '';
+});
+$('setReset').addEventListener('click', async () => {
+  if ($('setReset').dataset.armed !== '1') {       // two clicks instead of a blocking confirm()
+    $('setReset').dataset.armed = '1'; $('setReset').textContent = 'לחץ שוב לאישור האיפוס';
+    setTimeout(() => { $('setReset').dataset.armed = ''; $('setReset').textContent = 'איפוס לברירת מחדל'; }, 5000);
+    return;
+  }
+  try {
+    await postConfig({ local: {} });
+    applyPrefsLocally({});
+    setTimeout(() => location.reload(), 300);
+  } catch (e) { $('setMsg').textContent = 'האיפוס נכשל: ' + e.message; }
+});
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  if (!$('healthOverlay').hidden) $('healthOverlay').hidden = true;
+  if (!$('settingsOverlay').hidden) $('settingsOverlay').hidden = true;
+});
+
+const DL_BUILD = '17.11-74';
 console.log('%cDispatch LIVE build ' + DL_BUILD, 'color:#22d3ee;font-weight:bold');
 const TENSION_W = { alerts: 0.50, idf: 0.20, news: 0.30 };  // component weights
 const TENSION_BASELINE = 12;   // structural background level for Israel

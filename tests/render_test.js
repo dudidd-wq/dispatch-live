@@ -3,7 +3,11 @@
 const { spawn } = require('child_process');
 const path = require('path');
 const { chromium } = require('playwright');
-const ROOT = path.join(__dirname, '..');
+const fs = require('fs'), os = require('os');
+const SRC = path.join(__dirname, '..');
+// a scratch copy: the settings test writes config.local.json and must not touch the checkout
+const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-render-'));
+for (const f of ['index.html', 'server.py', 'brain.py', 'dlconfig.py']) fs.copyFileSync(path.join(SRC, f), path.join(ROOT, f));
 const PORT = process.env.PORT || '3187';
 
 (async () => {
@@ -14,6 +18,13 @@ const PORT = process.env.PORT || '3187';
   let browser;
   try {
     await new Promise(r => setTimeout(r, 2500));
+    // secrets and runtime state must never be reachable as static files
+    fs.writeFileSync(path.join(ROOT, 'google.key'), 'not-a-real-key');
+    fs.writeFileSync(path.join(ROOT, 'config.local.json'), '{}');
+    for (const f of ['google.key', 'config.local.json', '.gitignore', 'data/state.json']) {
+      const r = await fetch('http://127.0.0.1:' + PORT + '/' + f);
+      if (r.status !== 404) fail('/' + f + ' is served as a static file (HTTP ' + r.status + ')');
+    }
     browser = await chromium.launch();
     const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
     const errors = [];
@@ -33,6 +44,29 @@ const PORT = process.env.PORT || '3187';
       if (r.cells !== 2 || r.alertMap !== 1 || !r.traffic) fail(name + ': maps missing');
       if (r.rows !== wantRows) fail(name + ': expected ' + wantRows + ' history rows, got ' + r.rows);
     }
+    // health panel
+    await page.waitForTimeout(3500);
+    await page.click('#healthPill');
+    await page.waitForTimeout(1500);
+    const hp = await page.evaluate(() => ({ rows: document.querySelectorAll('#healthBody .hl-table tr').length,
+      sub: document.getElementById('healthSub').textContent }));
+    console.log('health', JSON.stringify(hp));
+    if (hp.rows < 3) fail('health panel is empty');
+    await page.click('#healthClose');
+
+    // settings: change a threshold, save, and find it again after the reload
+    await page.click('#settingsBtn');
+    await page.waitForSelector('#setMinDelay');
+    await page.fill('#setMinDelay', '13');
+    await page.fill('#setCustomCh', 'Test | https://example.com/live/t.m3u8');
+    await page.click('#setSave');
+    await page.waitForTimeout(5000);
+    const st = await page.evaluate(() => ({ min: CFG.traffic.minDelay,
+      custom: CHANNELS.filter(c => c.custom).map(c => c.name), on: state.tvOn.has('custom1') }));
+    console.log('settings', JSON.stringify(st));
+    if (st.min !== 13) fail('saved threshold did not survive the reload');
+    if (st.custom[0] !== 'Test' || !st.on) fail('custom channel missing after save');
+
     const tag = await page.evaluate(() => [DL_BUILD, document.querySelector('.build-tag').textContent]);
     if ('v' + tag[0] !== tag[1]) fail('build tag mismatch ' + tag.join(' / '));
     if (errors.length) fail('page errors: ' + errors.slice(0, 3).join(' | '));

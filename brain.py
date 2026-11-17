@@ -28,6 +28,7 @@ import time
 import urllib.parse
 import urllib.request
 import urllib.error
+import dlconfig
 from datetime import datetime, timedelta
 
 PORT = int(os.environ.get("BRAIN_PORT", "3200"))
@@ -263,6 +264,36 @@ def _call_routes(key, seg):
     return dur, stat
 
 
+RUSH = [[7, 9], [16, 19]]
+_cfg_seen = {"mtime": None}
+
+
+def is_rush(hour):
+    return any(a <= hour <= b for a, b in RUSH)
+
+
+def apply_config(force=False):
+    """Read the traffic settings from config.json / config.local.json.
+    Called at start and on every scheduler tick; re-reads only when a file
+    changed, so the settings screen takes effect without a restart.
+    dlconfig clamps every value - the monthly cap can never pass the free tier."""
+    global MIN_DELAY, HEAVY_DELAY, MONTHLY_CAP, DAILY_CAP, TRIGGER_RESERVE, RUSH
+    try:
+        m = dlconfig.mtime()
+        if not force and m == _cfg_seen["mtime"]:
+            return False
+        t = dlconfig.load()["traffic"]
+        with _lock:
+            MIN_DELAY, HEAVY_DELAY = t["minDelay"], t["heavyDelay"]
+            MONTHLY_CAP, DAILY_CAP = t["monthlyCap"], t["dailyCap"]
+            TRIGGER_RESERVE = min(900, MONTHLY_CAP // 5)   # 900 at the default cap
+            RUSH = t["rush"]
+        _cfg_seen["mtime"] = m
+        return True
+    except Exception:
+        return False
+
+
 def il_now():
     """Israel local time regardless of where the machine thinks it is."""
     try:
@@ -275,7 +306,7 @@ def il_now():
 def batch_size():
     """How many segments to measure in one cycle."""
     h = il_now().hour
-    if 7 <= h <= 9 or 16 <= h <= 19:
+    if is_rush(h):
         return 4           # rush: a fresh slice of the roads that matter
     if 6 <= h <= 22:
         return 3
@@ -294,7 +325,7 @@ def pick_batch(n, force_all=False):
     if force_all:
         return list(range(len(SEGMENTS)))
     now = il_now()
-    rush = (7 <= now.hour <= 9) or (16 <= now.hour <= 19)
+    rush = is_rush(now.hour)
     scored = []
     for i, seg in enumerate(SEGMENTS):
         m = STATE["lastMeasure"].get(str(i))
@@ -446,9 +477,16 @@ def _note_failure(e):
         hint = "Routes API is not enabled on the Google Cloud project"
     elif "billing" in msg.lower():
         hint = "billing is not active on the Google Cloud project"
+    he = ("המפתח ב-google.key לא מתקבל ב-Google (נמחק או הוחלף?)" if "google.key holds" in hint else
+          "תוקף המפתח פג" if "expired" in hint else
+          "Routes API לא מופעל בפרויקט ב-Google Cloud" if "not enabled on" in hint else
+          "החיוב לא פעיל בפרויקט ב-Google Cloud" if "billing is not" in hint else
+          "המכסה היומית ב-Google מוצתה" if code == 429 else
+          "המפתח נדחה, Routes API כבוי או שהחיוב לא פעיל" if code in (401, 403) else
+          "בקשה לא תקינה" if code == 400 else "תקלת רשת או תקלה ב-Google")
     with _lock:
         prev = STATE.get("lastError") or {}
-        STATE["lastError"] = {"t": time.time(), "code": code, "msg": msg, "hint": hint,
+        STATE["lastError"] = {"t": time.time(), "code": code, "msg": msg, "hint": hint, "hintHe": he,
                               "count": (prev.get("count", 0) + 1) if prev.get("code") == code else 1}
         first = STATE["lastError"]["count"] == 1
     if first:      # once per distinct failure, ASCII only for the Windows console
@@ -508,7 +546,7 @@ def verify_interval_min():
     h = il_now().hour
     if h < 6 or h >= 23:
         return 180                        # night
-    if (7 <= h <= 9) or (16 <= h <= 19):
+    if is_rush(h):
         return 18                         # rush: a fresh slice every ~quarter hour
     return 60                             # rest of the day
 
@@ -566,6 +604,7 @@ def scheduler():
             # "no data" for half a minute looks broken even though it is not
             time.sleep(3 if first else 20)
             first = False
+            apply_config()
             if not api_key():
                 continue
             with _lock:
@@ -675,6 +714,7 @@ def snapshot():
                              "exhausted" if budget_left() < len(SEGMENTS) else "healthy")},
         "model": {"coverage": round(coverage(), 3), "samples": MODEL.get("samples", 0),
                   "phase": "learning" if coverage() < 0.55 else "steady"},
+        "thresholds": {"minDelay": MIN_DELAY, "heavyDelay": HEAVY_DELAY, "rush": RUSH},
         # failing = Google is refusing us right now; what the deck shows is the
         # model's forecast, not a measurement
         "health": {"failing": bool(last_err),
@@ -756,6 +796,7 @@ class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
 def main():
     _load()
+    apply_config(force=True)
     _roll_periods()
     threading.Thread(target=scheduler, daemon=True).start()
     threading.Thread(target=deck_watchdog, daemon=True).start()

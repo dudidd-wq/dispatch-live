@@ -35,6 +35,7 @@ PORT = int(os.environ.get("PORT", "3100"))
 # still fires at least once a minute — so 150s never false-triggers.
 import time as _time
 import time
+import dlconfig
 LAST_REQ = {"t": None}   # armed on the first request
 
 def _touch_activity():
@@ -327,29 +328,18 @@ OREF_HISTORY_API = "https://www.oref.org.il/api/v1/AlertHistory/heb?period=%s&ci
 # and workplace status per district. The endpoint has moved between versions,
 # so several known shapes are tried; if none respond we return a clear
 # "unavailable" marker rather than inventing guidance (this is safety data).
-OREF_POLICY_URLS = [
-    "https://www.oref.org.il/WarningMessages/Instructions/Instructions.json",
-    "https://www.oref.org.il/Shared/Ajax/GetDistrictsInstructions.aspx?lang=he",
-    "https://www.oref.org.il/Shared/Ajax/GetInstructions.aspx?lang=he",
-    "https://alerts-history.oref.org.il/Shared/Ajax/GetInstructions.aspx?lang=he",
-]
+OREF_POLICY_PROBE = "https://www.oref.org.il/api/v1/restrictionsPolicy/data/heb/%D7%91%D7%AA%20%D7%99%D7%9D"
 
 
 def fetch_oref_policy():
-    """Try each policy endpoint; first non-empty JSON wins."""
-    for url in OREF_POLICY_URLS:
-        ok, status, text = fetch_oref(url)
-        if not ok:
-            continue
-        t = (text or "").strip()
-        if not t or t in ("[]", "{}", "null"):
-            continue
-        try:
-            json.loads(t)
-        except Exception:
-            continue
-        return True, 200, t
-    return False, 502, '{"error":"policy unavailable","source":"oref"}'
+    """Defense-policy strip. Disabled since Oref replaced its site (2026):
+    the old endpoints are gone and the new per-area one
+    (api/v1/restrictionsPolicy/data/heb/<area>) answers HTTP 500 for every
+    area. The general page (restrictionsPolicy/heb) carries no per-area
+    status, so showing it would be presenting unverified safety guidance.
+    The daily self-test probes OREF_POLICY_PROBE and reports the day it
+    starts answering JSON again."""
+    return False, 502, '{"error":"policy unavailable","source":"oref","why":"upstream endpoint returns 500"}'
 
 
 # One outstanding request per upstream URL. The deck polls on a timer, so a
@@ -567,7 +557,21 @@ MARKET_SYMBOLS = [
     ("EURILS=X", "אירו"),
     ("BZ=F", "נפט ברנט"),
 ]
-_markets_cache = {"t": 0, "data": None}
+_markets_cache = {"t": 0, "data": None, "key": None}
+
+
+def _market_symbols():
+    """Symbols come from the config file; the list above is the default."""
+    try:
+        rows = [(r[0], r[1]) for r in dlconfig.load()["markets"]]
+    except Exception:
+        rows = list(MARKET_SYMBOLS)
+    key = repr(rows)
+    if _markets_cache.get("key") != key:        # list edited: drop the cache
+        _markets_cache.update(t=0, data=None, key=key)
+    return rows
+
+
 _flights_cache = {"t": 0, "data": None}
 
 
@@ -579,7 +583,7 @@ def fetch_markets():
     if _markets_cache["data"] and now - _markets_cache["t"] < 240:
         return _markets_cache["data"]
     out = []
-    for sym, name in MARKET_SYMBOLS:
+    for sym, name in _market_symbols():
         url = ("https://query1.finance.yahoo.com/v8/finance/chart/%s?range=1d&interval=15m"
                % _up.quote(sym))
         ok, _s, text = fetch_oref(url)
@@ -1724,6 +1728,266 @@ def fetch_idf_spokesperson():
 
 
 
+# ============================================================
+#   SOURCE HEALTH  +  DAILY SELF-TEST
+#   ----------------------------------------------------------
+#   Until v74 a source that broke simply vanished from the deck. Now every
+#   upstream request is recorded (last answer, latency, last error) and a
+#   self-test checks once a day that each source still returns the SHAPE the
+#   deck parses - which is exactly what changed when Oref replaced its site.
+# ============================================================
+HEALTH_SOURCES = {
+    "/oref/alerts":  ("oref_alerts",  "פיקוד העורף · התרעה פעילה", True),
+    "/oref/history": ("oref_history", "פיקוד העורף · היסטוריה", True),
+    "/idf":          ("idf",          "דובר צה״ל", False),
+    "/quakes":       ("quakes",       "רעידות אדמה", False),
+    "/markets":      ("markets",      "מדדים ומטבע", False),
+    "/flights":      ("flights",      "נתב״ג", False),
+    "/roads":        ("roads",        "דיווחי כבישים", False),
+    "/air":          ("air",          "איכות אוויר", False),
+    "/traffic":      ("traffic",      "שירות התנועה", False),
+}
+_health = {}
+_health_lock = threading.Lock()
+_selftest = {"at": 0.0, "running": False, "results": []}
+BOOT_AT = time.time()
+
+
+def _health_key(path, query):
+    """(id, label, critical) for a request path, or None if it is not a source."""
+    if path in HEALTH_SOURCES:
+        return HEALTH_SOURCES[path]
+    try:
+        if path == "/telegram":
+            ch = (parse_qs(query or "").get("ch") or [""])[0][:40]
+            return ("tg:" + ch, "טלגרם · " + ch, False) if ch else None
+        if path == "/fetch":
+            host = urlparse((parse_qs(query or "").get("url") or [""])[0]).netloc.lower()[:60]
+            if host.startswith("www."):
+                host = host[4:]
+            return ("feed:" + host, "הזנה · " + host, False) if host else None
+    except Exception:
+        return None
+    return None
+
+
+def health_note(sid, label, ok, ms, err="", critical=False):
+    now = time.time()
+    with _health_lock:
+        h = _health.setdefault(sid, {"id": sid, "label": label, "critical": critical,
+                                     "ok": None, "lastOk": 0, "lastFail": 0, "lastTry": 0,
+                                     "ms": 0, "error": "", "okCount": 0, "failCount": 0,
+                                     "streak": 0})
+        h["label"], h["lastTry"], h["ms"] = label, now, int(ms)
+        if ok:
+            h.update(ok=True, lastOk=now, streak=0)
+            h["okCount"] += 1
+        else:
+            h.update(ok=False, lastFail=now, error=str(err)[:200])
+            h["failCount"] += 1
+            h["streak"] += 1
+
+
+def _error_of(status, body):
+    """Why a response counts as a failure, or '' when it is fine."""
+    head = body[:240] if isinstance(body, str) else bytes(body[:240]).decode("utf-8", "replace")
+    if head.lstrip().startswith('{"error"'):
+        try:
+            return str(json.loads(head + ("" if head.rstrip().endswith("}") else '"}')).get("error"))[:160]
+        except Exception:
+            return head[:160]
+    if status >= 400:
+        return ("HTTP %d: " % status) + head[:120]
+    return ""
+
+
+def _fmt_age(ts, now):
+    if not ts:
+        return None
+    return int(now - ts)
+
+
+def health_snapshot():
+    now = time.time()
+    with _health_lock:
+        rows = [dict(h) for h in _health.values()]
+    for h in rows:
+        # down = the last attempt failed; stale = nobody has asked for 10 min
+        h["state"] = ("unknown" if h["ok"] is None else
+                      "down" if not h["ok"] else
+                      "stale" if now - h["lastTry"] > 600 else "ok")
+        h["okAgo"], h["failAgo"], h["tryAgo"] = (_fmt_age(h["lastOk"], now),
+                                                 _fmt_age(h["lastFail"], now),
+                                                 _fmt_age(h["lastTry"], now))
+    rows.sort(key=lambda h: (0 if h["state"] == "down" else 1, not h["critical"], h["label"]))
+    brain = brain_get("/traffic") or {}
+    st = dict(_selftest)
+    return {
+        "build": _build_on_disk(),
+        "uptimeSec": int(now - BOOT_AT),
+        "threads": threading.active_count(),
+        "sources": rows,
+        "down": [h["label"] for h in rows if h["state"] == "down"],
+        "brain": {"up": bool(brain), "health": brain.get("health"),
+                  "budget": brain.get("budget"), "checkedAt": brain.get("checkedAt")},
+        "selftest": {"at": st["at"], "ago": _fmt_age(st["at"], now), "running": st["running"],
+                     "results": st["results"],
+                     "failed": [r["label"] for r in st["results"] if r["ok"] is False]},
+    }
+
+
+def _build_on_disk():
+    try:
+        with open(os.path.join(ROOT, "index.html"), encoding="utf-8", errors="replace") as f:
+            m = re.search(r"const DL_BUILD = '([^']+)'", f.read())
+        return m.group(1) if m else ""
+    except Exception:
+        return ""
+
+
+def _j(text):
+    return json.loads(text)
+
+
+def _why(text):
+    """The reason inside an {"error": ...} body, or the body's first line."""
+    try:
+        return str(json.loads(text).get("error"))[:120]
+    except Exception:
+        return str(text)[:120]
+
+
+def _probe_oref_alerts():
+    ok, st, text = fetch_oref(OREF_ALERTS)
+    if not ok:
+        return False, _why(text)
+    d = _j(text)
+    if isinstance(d, list) or (isinstance(d, dict) and ("data" in d or not d)):
+        return True, "אין התרעה פעילה" if not d else "התרעה פעילה"
+    return False, "מבנה לא צפוי: " + text[:80]
+
+
+def _probe_oref_history():
+    ok, st, text = fetch_oref(OREF_HISTORY_API % "lastWeek")
+    if not ok:
+        return False, _why(text)
+    rows = _normalize_oref_api(text)
+    if rows is None:
+        return False, "ה-API של ההיסטוריה שינה מבנה: " + text[:80]
+    return True, "%d אירועים בשבוע האחרון" % len(rows)
+
+
+def _probe_oref_policy():
+    ok, st, text = fetch_oref(OREF_POLICY_PROBE)
+    try:
+        if ok and isinstance(_j(text), (dict, list)):
+            return None, "הכתובת של פיקוד העורף חזרה לענות - אפשר להחזיר את פס המדיניות"
+    except Exception:
+        pass
+    return None, "כבוי: הכתובת האזורית של פיקוד העורף עדיין מחזירה שגיאה"
+
+
+def _probe_json(fn, check, describe):
+    def run():
+        d = _j(fn())
+        if isinstance(d, dict) and d.get("error"):
+            return False, str(d["error"])[:120]
+        if not check(d):
+            return False, "מבנה לא צפוי"
+        return True, describe(d)
+    return run
+
+
+def _probe_traffic():
+    b = brain_get("/traffic")
+    if not b:
+        return False, "שירות התנועה (brain.py) לא רץ"
+    h = b.get("health") or {}
+    if h.get("failing"):
+        e = h.get("error") or {}
+        return False, "Google דוחה: %s (%s)" % (e.get("hintHe") or e.get("hint", ""), e.get("code", ""))
+    if (b.get("budget") or {}).get("state") == "no_key":
+        return None, "אין google.key - התנועה כבויה"
+    return True, "%d מקטעים, מדידה אחרונה %s" % (len(b.get("segments") or []), b.get("checkedAt") or "-")
+
+
+SELFTEST_PROBES = [
+    ("oref_alerts", "פיקוד העורף · התרעה פעילה", _probe_oref_alerts),
+    ("oref_history", "פיקוד העורף · היסטוריה", _probe_oref_history),
+    ("oref_policy", "פיקוד העורף · מדיניות התגוננות", _probe_oref_policy),
+    ("idf", "דובר צה״ל", _probe_json(lambda: fetch_idf_spokesperson(),
+        lambda d: isinstance(d, list) and len(d) > 0 and isinstance(d[0], dict),
+        lambda d: "%d הודעות" % len(d))),
+    ("quakes", "רעידות אדמה", _probe_json(lambda: fetch_quakes(),
+        lambda d: isinstance(d, (list, dict)), lambda d: "תקין")),
+    ("markets", "מדדים ומטבע", _probe_json(lambda: fetch_markets(),
+        lambda d: isinstance(d, list) and len(d) > 0, lambda d: "%d מדדים" % len(d))),
+    ("flights", "נתב״ג", _probe_json(lambda: fetch_flights(),
+        lambda d: isinstance(d, dict) and "dep" in d and "arr" in d, lambda d: "תקין")),
+    ("roads", "דיווחי כבישים", _probe_json(lambda: fetch_roads(),
+        lambda d: isinstance(d, dict) and isinstance(d.get("items"), list),
+        lambda d: "%d דיווחים" % len(d["items"]))),
+    ("air", "איכות אוויר", _probe_json(lambda: fetch_air(32.017, 34.745),
+        lambda d: isinstance(d, dict) and "aqi" in d, lambda d: "AQI %s" % d.get("aqi"))),
+    ("traffic", "שירות התנועה", _probe_traffic),
+]
+
+
+def run_selftest():
+    """Check every source against the shape the deck expects. ok is True,
+    False, or None for 'informational' (a source that is off on purpose)."""
+    if _selftest["running"]:
+        return
+    _selftest["running"] = True
+    results = []
+    try:
+        for sid, label, probe in SELFTEST_PROBES:
+            t0 = time.time()
+            try:
+                ok, detail = probe()
+            except Exception as e:
+                ok, detail = False, "%s: %s" % (type(e).__name__, str(e)[:120])
+            results.append({"id": sid, "label": label, "ok": ok, "detail": detail,
+                            "ms": int((time.time() - t0) * 1000)})
+        _selftest.update(at=time.time(), results=results)
+        bad = [r for r in results if r["ok"] is False]
+        if bad:        # ASCII only: the Windows console mangles Hebrew
+            print("  [self-test] %d of %d sources FAILED: %s  (details: /health)"
+                  % (len(bad), len(results), ", ".join(r["id"] for r in bad)))
+    finally:
+        _selftest["running"] = False
+
+
+def _selftest_loop():
+    time.sleep(90)                      # let the first real requests go first
+    while True:
+        try:
+            run_selftest()
+        except Exception:
+            pass
+        time.sleep(24 * 3600)
+
+
+def _is_local_request(handler):
+    """Settings may only be changed from this machine. The peer address stops
+    other devices on the LAN; the Host and Origin checks stop a web page on
+    this machine (or a DNS-rebinding page) from posting on the user's behalf."""
+    try:
+        if handler.client_address[0] not in ("127.0.0.1", "::1", "::ffff:127.0.0.1"):
+            return False
+        host = (handler.headers.get("Host") or "").split(":")[0].lower()
+        if host not in ("localhost", "127.0.0.1", "[::1]"):
+            return False
+        origin = handler.headers.get("Origin")
+        if origin:
+            oh = urlparse(origin).hostname or ""
+            if oh.lower() not in ("localhost", "127.0.0.1", "::1"):
+                return False
+        return True
+    except Exception:
+        return False
+
+
 class Handler(BaseHTTPRequestHandler):
     # Per-connection only: an idle keep-alive releases its thread instead of
     # holding it. This is the safe half of what a global default would do.
@@ -1759,6 +2023,7 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def _send(self, status, body, content_type, extra=None):
+        self._resp = (status, body[:240])      # what the health wrapper inspects
         if isinstance(body, str):
             body = body.encode("utf-8")
         # A client that gave up mid-response is routine here: the deck aborts
@@ -1793,11 +2058,74 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, '{"ok":true}', "application/json; charset=utf-8",
                        {"Access-Control-Allow-Origin": "*", "Cache-Control": "no-store"})
             return
+        if parsed.path == "/config":
+            if not _is_local_request(self):
+                self._send(403, '{"ok":false,"error":"settings can only be changed on this computer"}',
+                           "application/json; charset=utf-8")
+                return
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                if length <= 0 or length > dlconfig.MAX_BYTES:
+                    raise ValueError("bad length")
+                req = json.loads(self.rfile.read(length).decode("utf-8", "replace"))
+                if not isinstance(req, dict):
+                    raise ValueError("body must be an object")
+                if isinstance(req.get("local"), dict):          # replace the whole file
+                    ok, msg = dlconfig.save_local(req["local"])
+                elif isinstance(req.get("patch"), dict):        # merge into it
+                    ok, msg = dlconfig.patch_local(req["patch"])
+                else:
+                    ok, msg = False, "expected {local:{...}} or {patch:{...}}"
+            except Exception as e:
+                ok, msg = False, "bad request: %s" % str(e)[:80]
+            self._send(200 if ok else 400,
+                       json.dumps({"ok": ok, "message": msg,
+                                   "config": dlconfig.load() if ok else None}, ensure_ascii=False),
+                       "application/json; charset=utf-8", {"Cache-Control": "no-store"})
+            return
         self._send(404, "Not found", "text/plain; charset=utf-8")
 
     def do_GET(self):
+        """Route the request, then record how the source behaved."""
+        parsed = urlparse(self.path)
+        key = _health_key(parsed.path, parsed.query)
+        if not key:
+            return self._route_get()
+        self._resp = None
+        t0 = time.time()
+        try:
+            self._route_get()
+        finally:
+            status, body = self._resp or (599, "no response")
+            err = _error_of(status, body)
+            health_note(key[0], key[1], not err, (time.time() - t0) * 1000, err, key[2])
+
+    def _route_get(self):
         _touch_activity()
         parsed = urlparse(self.path)
+
+        if parsed.path == "/health":
+            self._send(200, json.dumps(health_snapshot(), ensure_ascii=False, indent=2),
+                       "application/json; charset=utf-8",
+                       {"Access-Control-Allow-Origin": "*", "Cache-Control": "no-store"})
+            return
+        if parsed.path == "/selftest":
+            if "run" in (parsed.query or "") and not _selftest["running"]:
+                threading.Thread(target=run_selftest, daemon=True).start()
+            self._send(200, json.dumps({"at": _selftest["at"], "running": True if "run" in (parsed.query or "") else _selftest["running"],
+                                        "results": _selftest["results"]}, ensure_ascii=False),
+                       "application/json; charset=utf-8",
+                       {"Access-Control-Allow-Origin": "*", "Cache-Control": "no-store"})
+            return
+        if parsed.path == "/config":
+            self._send(200, json.dumps({"config": dlconfig.load(), "local": dlconfig.load_local(),
+                                        "defaults": dlconfig.DEFAULTS,
+                                        "writable": _is_local_request(self),
+                                        "freeTier": dlconfig.FREE_TIER,
+                                        "ceiling": dlconfig.HARD_MONTHLY_CEILING},
+                                       ensure_ascii=False),
+                       "application/json; charset=utf-8", {"Cache-Control": "no-store"})
+            return
 
         # ---- view-state sync (controller pushes, receiver polls) ----
         if parsed.path == "/state":
@@ -1998,7 +2326,14 @@ class Handler(BaseHTTPRequestHandler):
         # Prevent directory traversal
         safe = os.path.normpath(path).lstrip("/\\")
         file_path = os.path.join(ROOT, safe)
-        if not file_path.startswith(ROOT) or not os.path.isfile(file_path):
+        # Secrets and runtime state are never static files. Until v74
+        # /google.key was served like any other file - in NETWORK mode to
+        # every device on the Wi-Fi.
+        base = os.path.basename(file_path).lower()
+        blocked = (base.endswith(".key") or base.startswith("config.local")
+                   or base.startswith(".")
+                   or safe.replace("\\", "/").split("/")[0].lower() in ("data", ".git", ".github", "tests"))
+        if blocked or not file_path.startswith(ROOT) or not os.path.isfile(file_path):
             self._send(404, "Not found", "text/plain; charset=utf-8")
             return
         ext = os.path.splitext(file_path)[1].lower()
@@ -2064,6 +2399,7 @@ def main():
         print("  Opening the deck in your browser...")
         print()
     threading.Thread(target=_activity_watchdog, daemon=True).start()
+    threading.Thread(target=_selftest_loop, daemon=True).start()
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

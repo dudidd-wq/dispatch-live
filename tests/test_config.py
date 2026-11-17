@@ -1,0 +1,127 @@
+"""Local configuration: defaults, layering, clamping, and who may write."""
+import json, os, sys, tempfile, unittest
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+import dlconfig, brain, server
+
+
+class Tmp(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self._paths = (dlconfig.CONFIG_PATH, dlconfig.LOCAL_PATH)
+        dlconfig.CONFIG_PATH = os.path.join(self.tmp, "config.json")
+        dlconfig.LOCAL_PATH = os.path.join(self.tmp, "config.local.json")
+
+    def tearDown(self):
+        dlconfig.CONFIG_PATH, dlconfig.LOCAL_PATH = self._paths
+
+    def write(self, name, obj):
+        with open(os.path.join(self.tmp, name), "w", encoding="utf-8") as f:
+            f.write(obj if isinstance(obj, str) else json.dumps(obj, ensure_ascii=False))
+
+
+class TestDefaults(Tmp):
+    def test_no_files_means_todays_behaviour(self):
+        c = dlconfig.load()
+        self.assertEqual(c["traffic"], {"minDelay": 10, "heavyDelay": 20, "monthlyCap": 4500,
+                                        "dailyCap": 200, "rush": [[7, 9], [16, 19]]})
+        self.assertEqual([m[0] for m in c["markets"]], [s for s, _ in server.MARKET_SYMBOLS])
+        self.assertTrue(all(v is None for v in c["prefs"].values()))
+        self.assertEqual(c["channels"]["custom"], [])
+        self.assertEqual(c["display"]["fontScale"], 1.0)
+
+    def test_broken_file_is_ignored_not_fatal(self):
+        self.write("config.local.json", "{ this is not json")
+        self.assertEqual(dlconfig.load()["traffic"]["minDelay"], 10)
+
+    def test_local_overrides_shared(self):
+        self.write("config.json", {"traffic": {"minDelay": 12, "heavyDelay": 30}})
+        self.write("config.local.json", {"traffic": {"minDelay": 15}})
+        t = dlconfig.load()["traffic"]
+        self.assertEqual((t["minDelay"], t["heavyDelay"], t["monthlyCap"]), (15, 30, 4500))
+
+
+class TestClamping(Tmp):
+    def test_budget_can_never_pass_the_free_tier(self):
+        self.write("config.local.json", {"traffic": {"monthlyCap": 999999, "dailyCap": 99999}})
+        t = dlconfig.load()["traffic"]
+        self.assertLessEqual(t["monthlyCap"], dlconfig.HARD_MONTHLY_CEILING)
+        self.assertLess(dlconfig.HARD_MONTHLY_CEILING, dlconfig.FREE_TIER)
+        self.assertLessEqual(t["dailyCap"], 400)
+
+    def test_nonsense_values_fall_back(self):
+        self.write("config.local.json", {"traffic": {"minDelay": "abc", "heavyDelay": 3, "rush": [[25, 3], "x"]},
+                                         "markets": [["bad symbol!", "x"], ["", ""]],
+                                         "display": {"fontScale": 40}})
+        c = dlconfig.load()
+        self.assertEqual(c["traffic"]["minDelay"], 10)
+        self.assertGreater(c["traffic"]["heavyDelay"], c["traffic"]["minDelay"])
+        self.assertEqual(c["traffic"]["rush"], [[7, 9], [16, 19]])
+        self.assertEqual(len(c["markets"]), 6)
+        self.assertEqual(c["display"]["fontScale"], 1.5)
+
+    def test_custom_channels_and_feeds_must_be_http_urls(self):
+        self.write("config.local.json", {
+            "channels": {"custom": [{"name": "A", "src": "https://x.test/a.m3u8"},
+                                    {"name": "B", "src": "javascript:alert(1)"},
+                                    {"name": "", "src": "https://x.test"}]},
+            "news": {"custom": [{"name": "F", "url": "https://x.test/rss", "region": "world"},
+                                {"name": "G", "url": "file:///etc/passwd"}]}})
+        c = dlconfig.load()
+        self.assertEqual([(x["id"], x["name"], x["type"]) for x in c["channels"]["custom"]], [("custom1", "A", "hls")])
+        self.assertEqual([(x["name"], x["region"]) for x in c["news"]["custom"]], [("F", "world")])
+
+
+class TestSave(Tmp):
+    def test_patch_merges_and_survives_reload(self):
+        self.assertTrue(dlconfig.save_local({"traffic": {"minDelay": 14}})[0])
+        self.assertTrue(dlconfig.patch_local({"prefs": {"dl-city": "חולון"}})[0])
+        c = dlconfig.load()
+        self.assertEqual(c["traffic"]["minDelay"], 14)
+        self.assertEqual(c["prefs"]["dl-city"], "חולון")
+
+    def test_rejects_non_objects_and_huge_files(self):
+        self.assertFalse(dlconfig.save_local([1, 2])[0])
+        self.assertFalse(dlconfig.save_local({"x": "y" * (dlconfig.MAX_BYTES + 10)})[0])
+
+
+class TestBrainReadsConfig(Tmp):
+    def tearDown(self):
+        Tmp.tearDown(self)
+        brain.apply_config(force=True)          # back to the defaults
+
+    def test_thresholds_follow_the_file(self):
+        self.write("config.local.json", {"traffic": {"minDelay": 15, "heavyDelay": 40, "monthlyCap": 3000,
+                                                     "rush": [[6, 10]]}})
+        self.assertTrue(brain.apply_config(force=True))
+        self.assertEqual(brain.level_of(12), "free")
+        self.assertEqual(brain.level_of(15), "slow")
+        self.assertEqual(brain.level_of(40), "heavy")
+        self.assertEqual(brain.MONTHLY_CAP, 3000)
+        self.assertLess(brain.TRIGGER_RESERVE, brain.MONTHLY_CAP)
+        self.assertTrue(brain.is_rush(6)); self.assertFalse(brain.is_rush(17))
+
+    def test_unchanged_file_is_not_reread(self):
+        brain.apply_config(force=True)
+        self.assertFalse(brain.apply_config())
+
+
+class FakeHandler:
+    def __init__(self, ip, host, origin=None):
+        self.client_address = (ip, 5555)
+        self.headers = {"Host": host}
+        if origin:
+            self.headers["Origin"] = origin
+
+
+class TestWhoMayWrite(unittest.TestCase):
+    def test_this_computer_only(self):
+        ok = server._is_local_request
+        self.assertTrue(ok(FakeHandler("127.0.0.1", "localhost:3100")))
+        self.assertTrue(ok(FakeHandler("127.0.0.1", "127.0.0.1:3100", "http://localhost:3100")))
+        self.assertFalse(ok(FakeHandler("192.168.1.20", "192.168.1.5:3100")))          # phone on the Wi-Fi
+        self.assertFalse(ok(FakeHandler("127.0.0.1", "evil.example:3100")))            # DNS rebinding
+        self.assertFalse(ok(FakeHandler("127.0.0.1", "localhost:3100", "https://evil.example")))  # cross-site post
+
+
+if __name__ == "__main__":
+    unittest.main()
