@@ -96,7 +96,7 @@ node tests/render_test.js                # בדיקת תצוגה בדפדפן (�
 ```
 
 אותן בדיקות רצות ב-GitHub Actions על כל push.
-כשמספר הגרסה ב-`index.html` משתנה והבדיקות עוברות, נוצרים אוטומטית תג ו-Release עם קובץ ההתקנה `dispatch-live-app.zip`.
+כשמספר הגרסה ב-`index.html` משתנה והבדיקות עוברות, נוצרים אוטומטית תג ו-Release עם קובץ ההתקנה `dispatch-live-v<גרסה>.zip` (למשל `dispatch-live-v17.11-82.zip`). בתוכו תיקייה בשם `dispatch-live-app`: מחלצים לתיקייה שמעליה (למשל `Downloads`) כדי לעדכן את הקיימת.
 בכל מסירה מעדכנים את מספר הגרסה בשני מקומות ב-`index.html` (`DL_BUILD` ו-`build-tag`) ושורה ב-[CHANGELOG.md](CHANGELOG.md).
 
 התוכנית קדימה: [docs/ROADMAP.md](docs/ROADMAP.md).

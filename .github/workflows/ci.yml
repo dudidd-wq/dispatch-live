@@ -66,7 +66,7 @@ jobs:
           mkdir -p out/dispatch-live-app
           cp index.html server.py brain.py dlconfig.py dlarchive.py *.bat *.sh *.command README.md CHANGELOG.md out/dispatch-live-app/
           cp -r docs out/dispatch-live-app/docs
-          (cd out && zip -qr ../dispatch-live-app.zip dispatch-live-app)
+          (cd out && zip -qr "../dispatch-live-${{ steps.v.outputs.tag }}.zip" dispatch-live-app)
           # release notes = this build's section of the changelog (exact heading match)
           awk -v h="v${{ steps.v.outputs.build }}" '
             /^## /{ if (on) exit; on = ($2 == h); next } on' CHANGELOG.md > notes.md
@@ -76,5 +76,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ steps.v.outputs.tag }}" dispatch-live-app.zip \
+          gh release create "${{ steps.v.outputs.tag }}" "dispatch-live-${{ steps.v.outputs.tag }}.zip" \
             --target "$GITHUB_SHA" --title "Dispatch LIVE ${{ steps.v.outputs.build }}" --notes-file notes.md
