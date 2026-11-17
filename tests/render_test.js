@@ -403,6 +403,36 @@ const PORT = process.env.PORT || '3187';
       await pg.context().close();
     }
 
+    // TV: every channel's buttons sit on its own cell and the sound button follows what is heard
+    {
+      await page.evaluate(() => { document.querySelector('.focus-opt[data-focus="grid"]').click(); renderTV(); });
+      await page.waitForTimeout(1500);
+      const hits = await page.evaluate(() => [...document.querySelectorAll('#tvGrid [data-audio]')].map(btn => {
+        const q = btn.getBoundingClientRect(), top = document.elementFromPoint(q.left + q.width / 2, q.top + q.height / 2);
+        const hit = top && top.closest('[data-audio]'); return hit ? hit.dataset.audio === btn.dataset.audio : 'nothing';
+      }));
+      console.log('sound buttons reachable:', hits.join(','));
+      if (!hits.length || hits.some(h => h !== true)) fail('a channel sound button is covered by another: ' + hits.join(','));
+      const audio = await page.evaluate(() => {
+        const ids = [...document.querySelectorAll('#tvGrid [data-audio]')].map(b => b.dataset.audio);
+        const click = id => document.querySelector(`#tvGrid [data-audio="${id}"]`).click();
+        const heard = () => Object.entries(state.videoEls).filter(([, v]) => !v.muted).map(([id]) => id).join('|');
+        const shown = () => [...document.querySelectorAll('#tvGrid [data-audio].on')].map(b => b.dataset.audio).join('|');
+        const out = [];
+        click(ids[0]); out.push(heard() + '/' + shown());
+        click(ids[1]); out.push(heard() + '/' + shown());
+        click(ids[1]); out.push(heard() + '/' + shown());
+        state.audioCh = ids[0]; renderTV();
+        const tracked = Object.keys(state.videoEls).length, inGrid = document.querySelectorAll('#tvGrid video').length;
+        state.audioCh = null; renderTV();
+        return { ids: ids.slice(0, 2), out, tracked, inGrid };
+      });
+      console.log('sound button sequence:', JSON.stringify(audio));
+      const [a, b] = audio.ids;
+      if (audio.out.join(',') !== `${a}/${a},${b}/${b},/`) fail('per-channel sound: ' + audio.out.join(','));
+      if (audio.tracked !== audio.inGrid) fail('players left behind after a redraw: ' + audio.tracked + ' tracked, ' + audio.inGrid + ' on screen');
+    }
+
     // Shabbat band helpers
     {
       const h = await page.evaluate(() => [hdateHe('11 Kislev 5787'), hdateHe('15 Sh\'vat 5787'), hdateHe('1 Adar II 5787'),

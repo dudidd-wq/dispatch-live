@@ -615,6 +615,10 @@
   @supports not (height: 1cqw) {
     body.shabbat-mode .tv-cell { width:100%; height:auto; aspect-ratio:16/9; max-height:100%; }
   }
+  /* each cell is the frame its own button bar is placed in. Without this the
+     bars of all channels were placed against the TV area and lay on top of
+     each other, so only the topmost channel's buttons could be clicked. */
+  .tv-cell { position:relative; display:flex; flex-direction:column; min-width:0; min-height:0; overflow:hidden; background:#000; }
   .tv-cell video, .tv-cell iframe {
     width:100%; height:100%; border:0; object-fit:contain; background:#000;
     flex:1 1 auto; min-height:0;
@@ -932,13 +936,17 @@
   .set-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); gap:4px 14px; }
   .set-grid label, .set-row label { display:flex; align-items:center; gap:7px; cursor:pointer; }
   .set-row { display:flex; flex-wrap:wrap; gap:10px 22px; align-items:center; margin:6px 0; }
-  .set-row .cap { color:var(--subtle); font-size:12px; }
+  .set-row .cap { color:var(--muted); font-size:12px; }
   .sys-body input[type=number], .sys-body input[type=text], .sys-body select, .sys-body textarea {
     background:rgba(255,255,255,0.05); border:1px solid var(--line); border-radius:7px;
     color:var(--ink); padding:5px 8px; font-family:inherit; font-size:13px; }
   .sys-body input[type=number] { width:86px; }
   .sys-body textarea { width:100%; min-height:64px; direction:ltr; text-align:left; font-family:'JetBrains Mono',monospace; font-size:12px; }
-  .set-help { color:var(--subtle); font-size:12px; margin:3px 0 0; }
+  .set-help { color:var(--muted); font-size:12px; margin:3px 0 0; }
+  /* drop-down lists: the open list is drawn by the system, on white unless
+     told otherwise - light text there was nearly invisible */
+  select { color-scheme:dark; }
+  select option, select optgroup { background-color:var(--panel, #121829); color:var(--ink, #e8edf7); }
   .set-foot { display:flex; gap:8px; align-items:center; padding:10px 14px; border-top:1px solid var(--line); }
   .set-btn { background:rgba(255,255,255,0.06); border:1px solid var(--line); color:var(--ink-2); border-radius:8px; padding:6px 14px; font-size:13px; font-family:inherit; cursor:pointer; }
   .set-btn.primary { background:var(--live); border-color:var(--live); color:#04121a; font-weight:800; }
@@ -1551,7 +1559,7 @@
     </div>
     <div class="brand-text">
       <div class="brand-title"><span class="live-dot" id="sysDot"></span>חדר <span style="color:var(--live)">מצב</span></div>
-      <div class="brand-sub" id="brandSub">DISPATCH LIVE · IL <b class="build-tag" title="גרסת הקבצים שרצה כרגע — אם אחרי עדכון המספר לא השתנה, מוגשת גרסה ישנה">v18.11-88</b></div>
+      <div class="brand-sub" id="brandSub">DISPATCH LIVE · IL <b class="build-tag" title="גרסת הקבצים שרצה כרגע — אם אחרי עדכון המספר לא השתנה, מוגשת גרסה ישנה">v18.11-89</b></div>
     </div>
   </div>
 
@@ -2616,6 +2624,13 @@ function renderTV() {
     : CHANNELS.filter(c => state.tvOn.has(c.id));
   $('tvCount').textContent = active.length;
   $('tvSub').textContent = state.shabbatMode ? 'מצב שבת · ערוץ 14' : `${active.length}/${CHANNELS.length} ערוצים`;
+  // Tear down every player before the grid is redrawn. A player left behind
+  // (a channel that is no longer on screen) kept streaming, and the stall
+  // watchdog restarted it - with sound, if it was the audio channel - so a
+  // channel nobody could see or mute was heard.
+  for (const id in state.hls) { try { state.hls[id].destroy(); } catch {} }
+  for (const id in state.videoEls) { const v = state.videoEls[id]; try { v.pause(); v.removeAttribute('src'); v.load(); } catch {} }
+  state.hls = {}; state.videoEls = {};
   grid.innerHTML = '';
 
   const list = (state.soloCh && !state.shabbatMode) ? CHANNELS.filter(c=>c.id===state.soloCh) : active;
@@ -2718,9 +2733,13 @@ function renderTV() {
       target.appendChild(cell);
       mountChannel(ch, v);
       state.videoEls[ch.id] = v;
-      // restore unmuted state if this channel is the active-audio one
-      // (but a receiver stays muted so muted-autoplay is never blocked)
-      if (!IS_RECEIVER && state.audioCh === ch.id) { v.muted = false; cell.classList.add('audio-on'); }
+      v.addEventListener('volumechange', syncAudioUI);
+      // the audio channel: start muted (muted autoplay always works), then
+      // unmute once it plays; if the browser refuses, stay muted and say so
+      // on the button. A receiver always stays muted.
+      if (!IS_RECEIVER && state.audioCh === ch.id) {
+        v.addEventListener('playing', () => { if (state.audioCh === ch.id) unmuteChannel(ch.id); }, { once: true });
+      }
     } else if (ch.type === 'youtube') {
       const f = document.createElement('iframe');
       f.src = `https://www.youtube.com/embed/live_stream?channel=${ch.yt}&autoplay=1&mute=1`;
@@ -2763,36 +2782,43 @@ function renderTV() {
       pushState();
     });
   });
-  // click handlers for per-channel audio (only one channel audible at a time)
+  // per-channel audio: one channel audible at a time. The button acts on what
+  // is actually heard, not on a remembered state that a redraw may have lost.
   grid.querySelectorAll('[data-audio]').forEach(b => {
     b.addEventListener('click', e => {
       e.stopPropagation();
-      const id = b.dataset.audio;
-      const turningOn = state.audioCh !== id;
-      // mute every video first
-      for (const cid in state.videoEls) {
-        const v = state.videoEls[cid];
-        if (v) v.muted = true;
-        const c = v && v.closest('.tv-cell'); if (c) c.classList.remove('audio-on');
-      }
-      if (turningOn) {
-        state.audioCh = id;
-        const v = state.videoEls[id];
-        if (v) { v.muted = false; v.play().catch(()=>{}); const c=v.closest('.tv-cell'); if(c) c.classList.add('audio-on'); }
-      } else {
-        state.audioCh = null;  // toggled off
-      }
-      // update all audio button icons
-      grid.querySelectorAll('[data-audio]').forEach(btn => {
-        const on = btn.dataset.audio === state.audioCh;
-        btn.classList.toggle('on', on);
-        btn.title = on ? 'השתק' : 'הפעל שמע';
-        btn.querySelector('svg').innerHTML = on
-          ? '<path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>'
-          : '<path d="M11 5 6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>';
-      });
+      const id = b.dataset.audio, v = state.videoEls[id];
+      const heard = state.audioCh === id && v && !v.muted && !v.paused;
+      for (const cid in state.videoEls) state.videoEls[cid].muted = true;
+      if (heard) state.audioCh = null;
+      else { state.audioCh = id; unmuteChannel(id); }
+      syncAudioUI();
       pushState();
     });
+  });
+  syncAudioUI();
+}
+
+const ICON_SOUND_ON = '<path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>';
+const ICON_SOUND_OFF = '<path d="M11 5 6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>';
+function unmuteChannel(id) {
+  const v = state.videoEls[id];
+  if (!v) return;
+  v.muted = false;
+  const p = v.play();
+  if (p && p.catch) p.catch(() => { v.muted = true; v.play().catch(() => {}); syncAudioUI(); });
+}
+// every audio button shows what is actually heard
+function syncAudioUI() {
+  document.querySelectorAll('#tvGrid [data-audio]').forEach(btn => {
+    const v = state.videoEls[btn.dataset.audio];
+    const on = !!(v && !v.muted && state.audioCh === btn.dataset.audio);
+    if (btn.classList.contains('on') === on && btn.dataset.drawn) return;
+    btn.dataset.drawn = '1';
+    btn.classList.toggle('on', on);
+    btn.title = on ? 'השתק' : 'הפעל שמע';
+    btn.querySelector('svg').innerHTML = on ? ICON_SOUND_ON : ICON_SOUND_OFF;
+    const cell = btn.closest('.tv-cell'); if (cell) cell.classList.toggle('audio-on', on);
   });
 }
 
@@ -5478,7 +5504,7 @@ document.addEventListener('keydown', e => {
   if (!$('archiveOverlay').hidden) $('archiveOverlay').hidden = true;
 });
 
-const DL_BUILD = '18.11-88';
+const DL_BUILD = '18.11-89';
 console.log('%cDispatch LIVE build ' + DL_BUILD, 'color:#22d3ee;font-weight:bold');
 const TENSION_W = { alerts: 0.50, idf: 0.20, news: 0.30 };  // component weights
 const TENSION_BASELINE = 12;   // structural background level for Israel
@@ -5816,6 +5842,11 @@ function renderAlertsBody(history) {
 // Move the second big channel between the featured column and the strip.
 // We relocate the existing element rather than re-rendering the grid — a
 // rebuild would tear down every HLS session and reload eight live streams.
+// moving a cell in the page pauses its video: start it again
+function resumeIn(cell) {
+  const v = cell && cell.querySelector('video');
+  if (v && v.paused) v.play().catch(() => { v.muted = true; v.play().catch(() => {}); syncAudioUI(); });
+}
 function applyTvDemotion() {
   const featCol = document.querySelector('.tv-grid.featured-layout .featured-col');
   const strip = document.querySelector('.tv-grid.featured-layout .small-strip');
@@ -5823,10 +5854,10 @@ function applyTvDemotion() {
   const tvMode = state.focus === 'tv';
   if (tvMode) {
     const second = featCol.children[1];
-    if (second) { second.dataset.demoted = '1'; strip.insertBefore(second, strip.firstChild); }
+    if (second) { second.dataset.demoted = '1'; strip.insertBefore(second, strip.firstChild); resumeIn(second); }
   } else {
     const back = strip.querySelector('[data-demoted]');
-    if (back) { delete back.dataset.demoted; featCol.appendChild(back); }
+    if (back) { delete back.dataset.demoted; featCol.appendChild(back); resumeIn(back); }
   }
 }
 
@@ -6181,7 +6212,7 @@ function watchdogTick() {
         if (ch) {
           try { mountChannel(ch, v); } catch {}
           // keep the active-audio channel audible after a remount
-          if (state.audioCh === id) { v.muted = false; v.play().catch(()=>{}); }
+          if (state.audioCh === id && !IS_RECEIVER) unmuteChannel(id);
           else { v.play().catch(()=>{}); }
         }
         prev.strikes = 0;
