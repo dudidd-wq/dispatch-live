@@ -529,7 +529,7 @@ class TestHayomYomFile(unittest.TestCase):
         import tempfile
         self._root = server.ROOT
         server.ROOT = tempfile.mkdtemp()
-        server._hayom_cache.update(mtime=None, data={})
+        server._hayom_cache.update(key=None, data={})
 
     def tearDown(self):
         server.ROOT = self._root

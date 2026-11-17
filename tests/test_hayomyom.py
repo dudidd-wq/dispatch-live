@@ -47,10 +47,29 @@ class TestCommonYearAdar(unittest.TestCase):
         root = server.ROOT
         try:
             server.ROOT = tempfile.mkdtemp()
-            server._hayom_cache.update(mtime=None, data={})
+            server._hayom_cache.update(key=None, data={})
             with open(os.path.join(server.ROOT, "hayomyom.json"), "w", encoding="utf-8") as f:
                 json.dump({"14 Adar I": "one", "14 Adar II": "two"}, f)
             self.assertEqual(server.hayomyom_entry("14 Adar 5787")["text"], "two")
             self.assertEqual(server.hayomyom_entry("14 Adar I 5790")["text"], "one")
+        finally:
+            server.ROOT = root
+
+
+class TestBundledAndLocal(unittest.TestCase):
+    def test_the_local_file_wins_day_by_day_and_the_bundled_text_fills_the_rest(self):
+        root = server.ROOT
+        try:
+            server.ROOT = tempfile.mkdtemp()
+            server._hayom_cache.update(key=None, data={})
+            os.makedirs(os.path.join(server.ROOT, "content"))
+            with open(os.path.join(server.ROOT, "content", "hayomyom.json"), "w", encoding="utf-8") as f:
+                json.dump({"_rights": "x", "1 Elul": "bundled elul", "11 Kislev": "bundled kislev"}, f)
+            self.assertEqual(server.hayomyom_entry("1 Elul 5787")["text"], "bundled elul")
+            self.assertIsNone(server.hayomyom_entry("_rights"))
+            with open(os.path.join(server.ROOT, "hayomyom.json"), "w", encoding="utf-8") as f:
+                json.dump({"11 Kislev": "local kislev"}, f)
+            self.assertEqual(server.hayomyom_entry("11 Kislev 5787")["text"], "local kislev")
+            self.assertEqual(server.hayomyom_entry("1 Elul 5787")["text"], "bundled elul")
         finally:
             server.ROOT = root

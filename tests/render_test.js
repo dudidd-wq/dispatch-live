@@ -383,8 +383,12 @@ const PORT = process.env.PORT || '3187';
       });
       await pg.goto(base + '/', { waitUntil: 'domcontentloaded' });
       await pg.waitForTimeout(3000);
+      // the news arrives from the network: give it time, and fall back to the rule itself
+      await pg.waitForSelector('.news-rows-wrap', { timeout: 20000 }).catch(() => {});
       const d = await pg.evaluate(() => ({ title: parseFloat(getComputedStyle(document.querySelector('.block-title')).fontSize),
-        focus: state.focus, cols: getComputedStyle(document.querySelector('.news-rows-wrap') || document.body).columnCount,
+        focus: state.focus, cols: document.querySelector('.news-rows-wrap')
+          ? getComputedStyle(document.querySelector('.news-rows-wrap')).columnCount
+          : (/\.news-rows-wrap\{column-count:(\d+)/.exec([...document.querySelectorAll('style[data-dl]')].map(x => x.textContent).join('')) || [])[1],
         strip: getComputedStyle(document.getElementById('lifeStrip')).display,
         theme: document.body.className, bg: getComputedStyle(document.querySelector('.block')).backgroundColor }));
       await pg.evaluate(() => document.querySelector('.focus-opt[data-focus="tv"]').click());

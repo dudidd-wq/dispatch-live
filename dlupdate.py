@@ -34,7 +34,7 @@ API_LATEST = "https://api.github.com/repos/%s/releases/latest"
 PROGRAM_FILES = ("index.html", "server.py", "brain.py", "dlconfig.py", "dlarchive.py", "dlupdate.py", "make_hayomyom.py",
                  "README.md", "CHANGELOG.md")
 LAUNCHER_RE = re.compile(r"^[A-Za-z0-9_-]+\.(bat|sh|command)$")
-DOC_RE = re.compile(r"^docs/[A-Za-z0-9_-]+\.md$")
+DOC_RE = re.compile(r"^(docs/[A-Za-z0-9_-]+\.md|content/[A-Za-z0-9_-]+\.(json|md))$")
 ALLOWED_HOSTS = ("api.github.com", "github.com", "objects.githubusercontent.com",
                  "release-assets.githubusercontent.com", "codeload.github.com")
 MAX_ZIP = 15 * 1024 * 1024

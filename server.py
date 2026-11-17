@@ -2300,28 +2300,34 @@ def fetch_public(target, max_hops=5, max_bytes=6 * 1024 * 1024):
             guard.cancel()
 
 
-# ---- Hayom Yom from a local file the owner supplies ----
-# The text is published by Kehot; no source offers it to programs, so the
-# deck reads it only from hayomyom.json next to server.py (never in the
-# repository). Keys are Hebrew dates as Hebcal writes them ("11 Kislev",
-# "1 Adar II"); a key may also name a weekday-specific entry. Values are text.
-_hayom_cache = {"mtime": None, "data": {}}
+# ---- Hayom Yom ----
+# content/hayomyom.json ships with the program: the text of Hayom Yom from the
+# Lubavitch Library (chabadlibrary.org), all rights reserved to Kehot, used
+# with permission for non-commercial use only (content/NOTICE.md). A local
+# hayomyom.json next to server.py, if present, is read first, day by day.
+# Keys are Hebrew dates as Hebcal writes them ("11 Kislev", "1 Adar II").
+_hayom_cache = {"key": None, "data": {}}
+
+
+def _hayom_load(path):
+    try:
+        with open(path, encoding="utf-8-sig") as f:
+            raw = json.load(f)
+        return {" ".join(str(k).split()).lower(): str(v)[:4000] for k, v in raw.items()
+                if not str(k).startswith("_")} if isinstance(raw, dict) else {}
+    except Exception:
+        return {}
 
 
 def hayomyom_entry(hdate):
-    path = os.path.join(ROOT, "hayomyom.json")
-    try:
-        mt = os.path.getmtime(path)
-    except OSError:
-        return None
-    if _hayom_cache["mtime"] != mt:
-        try:
-            with open(path, encoding="utf-8-sig") as f:
-                raw = json.load(f)
-            data = {" ".join(str(k).split()).lower(): str(v)[:2000] for k, v in raw.items()} if isinstance(raw, dict) else {}
-        except Exception:
-            data = {}
-        _hayom_cache.update(mtime=mt, data=data)
+    paths = [os.path.join(ROOT, "content", "hayomyom.json"), os.path.join(ROOT, "hayomyom.json")]
+    key_now = tuple(os.path.getmtime(p) if os.path.exists(p) else None for p in paths)
+    if _hayom_cache["key"] != key_now:
+        merged = {}
+        for p in paths:                      # the local file wins, day by day
+            if os.path.exists(p):
+                merged.update(_hayom_load(p))
+        _hayom_cache.update(key=key_now, data=merged)
     key = " ".join(str(hdate or "").split()).lower()
     key = re.sub(r"\s+\d{4}$", "", key)            # "11 Kislev 5787" -> "11 kislev"
     text = _hayom_cache["data"].get(key)
