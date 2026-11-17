@@ -208,7 +208,9 @@ class TestV76IdsWithSkippedEntries(Tmp):
 class TestDisplaySettings(unittest.TestCase):
     def test_defaults_change_nothing_on_screen(self):
         d = dlconfig.sanitize({})["display"]
-        self.assertEqual(d, {"fontScale": 1.0, "uiScale": 1.0, "newsCols": 0, "startFocus": "", "lifeStrip": "all"})
+        self.assertEqual(d, {"fontScale": 1.0, "uiScale": 1.0, "newsCols": 0, "startFocus": "", "lifeStrip": "all", "theme": "classic"})
+        self.assertEqual(dlconfig.sanitize({"display": {"theme": "mono"}})["display"]["theme"], "mono")
+        self.assertEqual(dlconfig.sanitize({"display": {"theme": "x;y"}})["display"]["theme"], "classic")
 
     def test_values_are_clamped_and_unknown_choices_fall_back(self):
         d = dlconfig.sanitize({"display": {"uiScale": 9, "newsCols": "7", "startFocus": "<script>", "lifeStrip": "maybe"}})["display"]

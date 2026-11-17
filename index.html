@@ -6,7 +6,7 @@
 <title>חדר מצב — DISPATCH LIVE</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;700;800;900&family=Assistant:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;700;800;900&family=Assistant:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Doto:wght@700;900&display=swap" />
 <script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js"></script>
 <style>
   /* ============================================================
@@ -1060,6 +1060,11 @@
   }
   .shelter-card.safe .sc-count { color:var(--ok); font-size:52px; }
   .sc-phase { margin-top:8px; font-size:17px; font-weight:700; color:#fff; }
+  /* my area: the seconds left to reach shelter are the one thing to read
+     from across the room */
+  .shelter-card.mine { max-width:min(760px, 92vw); padding:18px 30px; }
+  .shelter-card.mine .sc-count { font-size:clamp(76px, 15vh, 168px); }
+  .shelter-card.mine .sc-phase { font-size:clamp(17px, 2.4vw, 30px); }
   .sc-note { margin-top:5px; font-size:12px; color:rgba(255,255,255,0.65); }
   .tension-board {
     flex:0 0 auto; margin-bottom:8px; padding:10px 12px;
@@ -1380,9 +1385,9 @@
     text-shadow:0 0 40px rgba(255,45,85,0.6);
   }
   .takeover-sub {
-    font-family:'JetBrains Mono', monospace;
-    font-size:clamp(13px,2vw,18px); color:#ffb3c1; letter-spacing:0.2em;
-    text-transform:uppercase;
+    /* Hebrew: no letter-spacing (it breaks the word shapes) and no mono face */
+    font-family:'Heebo', sans-serif; font-weight:600;
+    font-size:clamp(16px,2.3vw,26px); color:#ffd0d8;
   }
   .takeover-cities {
     display:flex; flex-wrap:wrap; gap:10px; justify-content:center;
@@ -1395,8 +1400,7 @@
   }
   .takeover-dismiss {
     position:relative;
-    font-family:'JetBrains Mono', monospace; font-size:13px; letter-spacing:0.1em;
-    text-transform:uppercase; color:#fff;
+    font-family:'Heebo', sans-serif; font-size:14px; font-weight:600; color:#fff;
     padding:11px 26px; border-radius:10px;
     border:1px solid rgba(255,255,255,0.4); background:rgba(0,0,0,0.25);
     margin-top:6px;
@@ -1452,6 +1456,62 @@
     .topbar { flex-wrap:wrap; gap:10px; }
     .status-pills .pill span.lbl { display:none; }
   }
+
+  /* ============================================================
+     THEMES (settings -> תצוגה -> עיצוב). "classic" = no class.
+     Only colours, borders, type and corners change; the layout never does.
+     ============================================================ */
+  /* A - ops room: quiet graphite, colour only for state */
+  body.theme-ops { --bg:#0a0a0b; --bg-2:#101012; --panel:#131315; --panel-2:#18181b; --line:#26262a; --line-2:#1c1c1f;
+    --ink:#ededed; --ink-2:#a1a1a8; --muted:#6a6a72; --subtle:#3b3b41; --live:#7dd3c0; --news:#e9b44c; --ok:#4ade80; --alert:#ff3b4e;
+    background:var(--bg); }
+  body.theme-ops .topbar { background:var(--bg); }
+  body.theme-ops .block { border-radius:4px; }
+  body.theme-ops .block-head { background:none; border-bottom-color:var(--line); }
+  body.theme-ops .block-title { letter-spacing:.04em; }
+  body.theme-ops .tdot, body.theme-ops .pill .dot, body.theme-ops .live-dot { box-shadow:none; }
+  body.theme-ops .clock { text-shadow:none; font-weight:600; }
+  body.theme-ops .life-strip { border-radius:4px; background:var(--bg-2); }
+  body.theme-ops .pill, body.theme-ops .focus-opt, body.theme-ops .block-tool, body.theme-ops .region-toggle { border-radius:3px; }
+  body.theme-ops .brand-mark { border-radius:4px; box-shadow:none; }
+  body.theme-ops .news-row { border-radius:0; }
+
+  /* B - broadcast studio: strong hierarchy, each panel in its own colour */
+  body.theme-studio { --bg:#050a17; --bg-2:#0a1226; --panel:#0c1530; --panel-2:#111d42; --line:#1b2a55; --line-2:#142047;
+    --ink:#f4f7ff; --ink-2:#b7c4e8; --muted:#7488bb; --live:#38d9f5; --news:#ffc53d; --ok:#3ee0a0; --alert:#ff2d55; }
+  body.theme-studio .block { border-radius:16px; box-shadow:0 14px 34px rgba(0,0,0,.4); }
+  body.theme-studio .block-head { padding:11px 16px; background:linear-gradient(180deg, var(--panel-2), var(--panel)); }
+  body.theme-studio .block.tv .block-head     { box-shadow:inset 0 4px 0 var(--live); }
+  body.theme-studio .block.news .block-head   { box-shadow:inset 0 4px 0 var(--news); }
+  body.theme-studio .block.alerts .block-head { box-shadow:inset 0 4px 0 var(--ok); }
+  body.theme-studio .block-title { font-size:18px; font-weight:800; }
+  body.theme-studio .block.tv .block-title { color:var(--live); }
+  body.theme-studio .block.news .block-title { color:var(--news); }
+  body.theme-studio .block.alerts .block-title { color:var(--ok); }
+  body.theme-studio .clock { font-family:'Heebo', sans-serif; font-weight:900; font-size:56px; text-shadow:none; }
+  body.theme-studio .news-row { padding:9px 11px; }
+  body.theme-studio .news-row.brk { background:rgba(255,45,85,.08); }
+  body.theme-studio .life-strip { border-radius:12px; background:rgba(255,255,255,.035); font-size:13.5px; }
+  body.theme-studio .focus-opt.active { box-shadow:0 0 0 2px rgba(255,255,255,.15); }
+
+  /* C - monochrome (Nothing-inspired): black and white, red only for danger */
+  body.theme-mono { --bg:#000; --bg-2:#000; --panel:#0a0a0a; --panel-2:#111; --line:#2a2a2a; --line-2:#1a1a1a;
+    --ink:#f2f2f2; --ink-2:#b0b0b0; --muted:#707070; --subtle:#3a3a3a; --live:#f2f2f2; --news:#f2f2f2; --ok:#f2f2f2; --alert:#ff1f2d;
+    background:#000; }
+  body.theme-mono .topbar { background:#000; }
+  body.theme-mono .block { border-radius:22px; border:1px dashed #333; }
+  body.theme-mono .block-head { background:none; border-bottom:1px dashed #262626; }
+  body.theme-mono .block-title { letter-spacing:.06em; }
+  body.theme-mono .tdot, body.theme-mono .pill .dot, body.theme-mono .fdot, body.theme-mono .live-dot { box-shadow:none; background:#f2f2f2; }
+  body.theme-mono .block.alerts .tdot, body.theme-mono .pill.alert.hot .dot { background:var(--alert); }
+  body.theme-mono .clock, body.theme-mono .date-il, body.theme-mono .block-title .count, body.theme-mono .nr-time { font-family:'Doto', 'JetBrains Mono', monospace; }
+  body.theme-mono .clock { font-weight:900; font-size:58px; text-shadow:none; letter-spacing:.04em; }
+  body.theme-mono .focus-opt.active { background:#f2f2f2; color:#000 !important; border-color:#f2f2f2; }
+  body.theme-mono .focus-opt[data-focus="alerts"].active { background:var(--alert); color:#fff !important; border-color:var(--alert); }
+  body.theme-mono .pill, body.theme-mono .focus-opt, body.theme-mono .block-tool { border-radius:999px; }
+  body.theme-mono .life-strip { border-radius:999px; border-style:dashed; background:#050505; }
+  body.theme-mono .brand-mark { background:#f2f2f2; box-shadow:none; border-radius:50%; }
+  body.theme-mono .news-row.fresh { box-shadow:inset 3px 0 0 #f2f2f2; }
 </style>
 </head>
 <body>
@@ -1464,7 +1524,7 @@
     </div>
     <div class="brand-text">
       <div class="brand-title"><span class="live-dot" id="sysDot"></span>חדר <span style="color:var(--live)">מצב</span></div>
-      <div class="brand-sub" id="brandSub">DISPATCH LIVE · IL <b class="build-tag" title="גרסת הקבצים שרצה כרגע — אם אחרי עדכון המספר לא השתנה, מוגשת גרסה ישנה">v17.11-83</b></div>
+      <div class="brand-sub" id="brandSub">DISPATCH LIVE · IL <b class="build-tag" title="גרסת הקבצים שרצה כרגע — אם אחרי עדכון המספר לא השתנה, מוגשת גרסה ישנה">v17.11-84</b></div>
     </div>
   </div>
 
@@ -1911,7 +1971,7 @@ for (const f of ((CFG && CFG.news && CFG.news.custom) || [])) {
                       region: f.region === 'world' ? 'world' : 'il', url: f.url, custom: true });
 }
 // ---- display settings (settings screen -> "תצוגה") ----
-const DISP = Object.assign({ fontScale: 1, uiScale: 1, newsCols: 0, startFocus: '', lifeStrip: 'all' },
+const DISP = Object.assign({ fontScale: 1, uiScale: 1, newsCols: 0, startFocus: '', lifeStrip: 'all', theme: 'classic' },
                            (CFG && CFG.display) || {});
 // Text size for the whole screen: every font size in the page's own style
 // sheet is multiplied once, here, before anything is drawn. Layout sizes are
@@ -1952,6 +2012,8 @@ scaleStyleFonts(DISP.uiScale);
     document.head.appendChild(st);
   }
 }
+const THEMES = { classic: 'קלאסי', ops: 'חדר מבצעים', studio: 'אולפן שידור', mono: 'מונוכרום' };
+if (DISP.theme && DISP.theme !== 'classic' && THEMES[DISP.theme]) document.body.classList.add('theme-' + DISP.theme);
 // The focus to open with. Only for a fresh start: the deck's own periodic
 // reload (same tab) keeps whatever was chosen on screen.
 const START_FOCUS = (() => {
@@ -5056,6 +5118,7 @@ function renderSettings(resp) {
       <label>עמודות חדשות <select id="setCols">${[0, 1, 2, 3, 4].map(v => opt(v, v ? String(v) : 'לפי רוחב', v === (c.display.newsCols || 0))).join('')}</select></label>
     </div>
     <div class="set-row">
+      <label>עיצוב <select id="setTheme">${Object.entries(THEMES).map(([v, t]) => opt(v, t, v === (c.display.theme || 'classic'))).join('')}</select></label>
       <label>מצב מיקוד בהפעלה <select id="setStartFocus">${[['', 'האחרון שנבחר'], ['grid', 'מאוזן'], ['tv', 'טלוויזיה'], ['news', 'חדשות'], ['alerts', 'צופר']].map(([v, t]) => opt(v, t, v === (c.display.startFocus || ''))).join('')}</select></label>
       <label>פס המדדים והתנועה <select id="setLife">${[['all', 'מוצג תמיד'], ['not-tv', 'מוסתר במצב טלוויזיה'], ['off', 'מוסתר']].map(([v, t]) => opt(v, t, v === (c.display.lifeStrip || 'all'))).join('')}</select></label>
     </div>
@@ -5108,7 +5171,7 @@ function collectSettings() {
                dailyCap: num('setDaily'), rush },
     display: { fontScale: parseFloat($('setFont').value) || 1, uiScale: parseFloat($('setUi').value) || 1,
                newsCols: parseInt($('setCols').value, 10) || 0, startFocus: $('setStartFocus').value,
-               lifeStrip: $('setLife').value },
+               lifeStrip: $('setLife').value, theme: $('setTheme').value },
   };
 }
 async function postConfig(payload) {
@@ -5235,7 +5298,7 @@ document.addEventListener('keydown', e => {
   if (!$('archiveOverlay').hidden) $('archiveOverlay').hidden = true;
 });
 
-const DL_BUILD = '17.11-83';
+const DL_BUILD = '17.11-84';
 console.log('%cDispatch LIVE build ' + DL_BUILD, 'color:#22d3ee;font-weight:bold');
 const TENSION_W = { alerts: 0.50, idf: 0.20, news: 0.30 };  // component weights
 const TENSION_BASELINE = 12;   // structural background level for Israel

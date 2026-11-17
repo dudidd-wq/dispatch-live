@@ -53,7 +53,7 @@ DEFAULTS = {
     # fontScale: news headlines; uiScale: every other text on the screen;
     # newsCols 0 = by width; startFocus "" = the last one chosen;
     # lifeStrip: "all" | "not-tv" (hidden in TV focus) | "off"
-    "display": {"fontScale": 1.0, "uiScale": 1.0, "newsCols": 0, "startFocus": "", "lifeStrip": "all"},
+    "display": {"fontScale": 1.0, "uiScale": 1.0, "newsCols": 0, "startFocus": "", "lifeStrip": "all", "theme": "classic"},
 }
 
 PREF_KEYS = tuple(DEFAULTS["prefs"].keys())
@@ -248,6 +248,7 @@ def sanitize(cfg):
         "newsCols": int(_num(disp.get("newsCols"), 0, 4, 0)),
         "startFocus": disp.get("startFocus") if disp.get("startFocus") in ("grid", "tv", "news", "alerts") else "",
         "lifeStrip": disp.get("lifeStrip") if disp.get("lifeStrip") in ("all", "not-tv", "off") else "all",
+        "theme": disp.get("theme") if disp.get("theme") in ("classic", "ops", "studio", "mono") else "classic",
     }
     return out
 

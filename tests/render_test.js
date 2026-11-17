@@ -378,20 +378,22 @@ const PORT = process.env.PORT || '3187';
       await pg.route('**/config', async r => {
         if (r.request().method() !== 'GET') return r.continue();
         const c = JSON.parse(JSON.stringify(cfg));
-        c.config.display = { fontScale: 1, uiScale: 1.2, newsCols: 1, startFocus: 'alerts', lifeStrip: 'not-tv' };
+        c.config.display = { fontScale: 1, uiScale: 1.2, newsCols: 1, startFocus: 'alerts', lifeStrip: 'not-tv', theme: 'mono' };
         r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(c) });
       });
       await pg.goto(base + '/', { waitUntil: 'domcontentloaded' });
       await pg.waitForTimeout(3000);
       const d = await pg.evaluate(() => ({ title: parseFloat(getComputedStyle(document.querySelector('.block-title')).fontSize),
         focus: state.focus, cols: getComputedStyle(document.querySelector('.news-rows-wrap') || document.body).columnCount,
-        strip: getComputedStyle(document.getElementById('lifeStrip')).display }));
+        strip: getComputedStyle(document.getElementById('lifeStrip')).display,
+        theme: document.body.className, bg: getComputedStyle(document.querySelector('.block')).backgroundColor }));
       await pg.evaluate(() => document.querySelector('.focus-opt[data-focus="tv"]').click());
       await pg.waitForTimeout(500);
       const stripTv = await pg.evaluate(() => getComputedStyle(document.getElementById('lifeStrip')).display);
       console.log('display settings:', JSON.stringify(d), 'strip in TV focus:', stripTv);
       if (Math.abs(d.title - 14 * 1.2) > 0.05) fail('text size for the whole screen not applied: ' + d.title);
       if (d.focus !== 'alerts') fail('opening focus not applied: ' + d.focus);
+      if (!/theme-mono/.test(d.theme) || d.bg !== 'rgb(10, 10, 10)') fail('theme not applied: ' + d.theme + ' ' + d.bg);
       if (d.cols !== '1') fail('news columns not applied: ' + d.cols);
       if (d.strip === 'none' || stripTv !== 'none') fail('markets strip rule not applied: ' + d.strip + '/' + stripTv);
       await pg.context().close();
