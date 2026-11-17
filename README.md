@@ -13,7 +13,7 @@
 | Windows, צפייה גם מהטלפון ברשת הביתית | `Start-Dispatch-NETWORK.bat` |
 | Mac / Linux | `./Start-Dispatch.sh` |
 | Windows, ברקע בלי חלונות שחורים | `Start-Dispatch-BACKGROUND.bat` (הפלט נכתב לתיקיית `logs`) |
-| Windows, הפעלה אוטומטית בכניסה למחשב | `Install-Autostart.bat` פעם אחת; הסרה ב-`Uninstall-Autostart.bat` |
+| Windows, הפעלה אוטומטית בכניסה למחשב | `Install-Autostart.bat` פעם אחת (רישום למשתמש הנוכחי, בלי הרשאות מנהל); הסרה ב-`Uninstall-Autostart.bat` |
 | עצירה | `Stop-Dispatch.bat` (או סגירת חלון המסך) |
 
 נדרש Python 3.9 ומעלה. המסך נפתח בכתובת `http://localhost:3100`.

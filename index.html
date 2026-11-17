@@ -1463,7 +1463,7 @@
     </div>
     <div class="brand-text">
       <div class="brand-title"><span class="live-dot" id="sysDot"></span>חדר <span style="color:var(--live)">מצב</span></div>
-      <div class="brand-sub" id="brandSub">DISPATCH LIVE · IL <b class="build-tag" title="גרסת הקבצים שרצה כרגע — אם אחרי עדכון המספר לא השתנה, מוגשת גרסה ישנה">v17.11-76</b></div>
+      <div class="brand-sub" id="brandSub">DISPATCH LIVE · IL <b class="build-tag" title="גרסת הקבצים שרצה כרגע — אם אחרי עדכון המספר לא השתנה, מוגשת גרסה ישנה">v17.11-77</b></div>
     </div>
   </div>
 
@@ -1708,23 +1708,38 @@ const DL_CFG = (() => {
   return null;                            // file://, the APK, or an old server: built-in defaults
 })();
 const CFG = (DL_CFG && DL_CFG.config) || null;
+// dl-sound is NOT synced: muting one screen must not mute the others.
 const CFG_SYNC_KEYS = ['dl-city','dl-lat','dl-lng','dl-shelter-sec','dl-tv','dl-featured','dl-featured2',
-                       'dl-news-off','dl-news-region','dl-news-relevant','dl-sound'];
+                       'dl-news-off','dl-news-region','dl-news-relevant'];
 const LS_RAW = { set: Storage.prototype.setItem, rem: Storage.prototype.removeItem };
 (() => {
   if (!CFG) return;
   const prefs = CFG.prefs || {};
+  const writable = !!DL_CFG.writable;
   for (const k of CFG_SYNC_KEYS) {
-    try { if (prefs[k] != null) LS_RAW.set.call(localStorage, k, String(prefs[k])); } catch {}
+    try {
+      if (prefs[k] == null) continue;
+      // On this computer the file is the truth. On any other device (a phone
+      // on the Wi-Fi cannot write the file) it only fills in what that device
+      // never chose for itself - otherwise its own choices would be undone on
+      // every reload.
+      if (writable || localStorage.getItem(k) == null) LS_RAW.set.call(localStorage, k, String(prefs[k]));
+    } catch {}
   }
-  if (!DL_CFG.writable) return;
-  const pending = {}; let timer = null;
-  const flush = () => {
+  if (!writable) return;
+  const pending = {}; let timer = null, retries = 0;
+  const flush = (leaving) => {
     timer = null;
-    const patch = { prefs: { ...pending } };
+    const sent = { ...pending };
     for (const k of Object.keys(pending)) delete pending[k];
+    if (!Object.keys(sent).length) return;
     fetch('/config', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                       body: JSON.stringify({ patch }) }).catch(() => {});
+                       body: JSON.stringify({ patch: { prefs: sent } }), keepalive: !!leaving })
+      .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); retries = 0; })
+      .catch(() => {            // not saved: keep it and try again, a few times
+        for (const k of Object.keys(sent)) if (!(k in pending)) pending[k] = sent[k];
+        if (!leaving && retries++ < 5 && !timer) timer = setTimeout(flush, 5000);
+      });
   };
   const queue = (k, v) => {
     if (!CFG_SYNC_KEYS.includes(k)) return;
@@ -1733,17 +1748,30 @@ const LS_RAW = { set: Storage.prototype.setItem, rem: Storage.prototype.removeIt
   };
   Storage.prototype.setItem = function (k, v) { LS_RAW.set.call(this, k, v); if (this === localStorage) queue(k, String(v)); };
   Storage.prototype.removeItem = function (k) { LS_RAW.rem.call(this, k); if (this === localStorage) queue(k, null); };
-  // one-time: what this browser already had becomes the file's starting point
+  // a change made just before a reload or a close must still reach the file
+  addEventListener('pagehide', () => { if (timer) { clearTimeout(timer); flush(true); } });
+  // One-time: what this browser already had becomes the file's starting
+  // point - but only while the file holds no preferences at all. Once it does,
+  // an old browser's leftovers must never overwrite the owner's choices.
   try {
-    if (!localStorage.getItem('dl-cfg-migrated')) {
+    const fileEmpty = CFG_SYNC_KEYS.every(k => prefs[k] == null);
+    if (fileEmpty && !localStorage.getItem('dl-cfg-migrated')) {
       for (const k of CFG_SYNC_KEYS) {
         const v = localStorage.getItem(k);
-        if (prefs[k] == null && v != null) queue(k, v);
+        if (v != null) queue(k, v);
       }
-      LS_RAW.set.call(localStorage, 'dl-cfg-migrated', '1');
     }
+    LS_RAW.set.call(localStorage, 'dl-cfg-migrated', '1');
   } catch {}
 })();
+// A stored list of ids, or null. A wrong type here used to throw while the
+// state object was being built and took the whole deck down with it.
+function lsList(key) {
+  try {
+    const v = JSON.parse(localStorage.getItem(key) || 'null');
+    return Array.isArray(v) && v.every(x => typeof x === 'string') ? v : null;
+  } catch { return null; }
+}
 const HE = /[\u0590-\u05FF]/;
 const isHe = s => HE.test(s || '');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -1847,7 +1875,7 @@ if (CFG && CFG.display && CFG.display.fontScale && CFG.display.fontScale !== 1) 
 const state = {
   focus: localStorage.getItem('dl-focus') || 'grid',
   tvOn: (() => {
-    const saved = JSON.parse(localStorage.getItem('dl-tv') || 'null');
+    const saved = lsList('dl-tv');
     const s = new Set(saved || CHANNELS.map(c=>c.id));
     // one-time migration: surface the new ערוץ 16 for existing users
     if (saved && !localStorage.getItem('dl-ch16-mig')) {
@@ -1863,7 +1891,7 @@ const state = {
   videoEls: {},
   iframeEls: {},   // iframe channels (mako) tracked for periodic refresh
   audioCh: null,
-  newsOff: new Set(JSON.parse(localStorage.getItem('dl-news-off') || '[]')),
+  newsOff: new Set(lsList('dl-news-off') || []),
   newsRegion: localStorage.getItem('dl-news-region') || 'all',  // all | il | world
   onlyRelevant: localStorage.getItem('dl-news-relevant') !== '0',  // default ON
   shabbatMode: localStorage.getItem('dl-shabbat') === '1',  // Shabbat display mode
@@ -3079,6 +3107,13 @@ async function pollAlerts() {
     // a proxy-level {"error":...} is a FAILURE, not "quiet" — the exact
     // trap where a dead feed masquerades as calm
     if (data && !Array.isArray(data) && data.error) { orefConn(false); return; }
+    // Exactly two shapes are an answer: [] (quiet) or an object with a list
+    // of localities. HTML, null or any other JSON is a broken feed, and a
+    // broken feed must never read as "quiet".
+    const quiet = Array.isArray(data) && data.length === 0;
+    const active = data && !Array.isArray(data) && typeof data === 'object'
+      && (Array.isArray(data.data) || Array.isArray(data.cities));
+    if (!quiet && !active) { orefConn(false); return; }
     orefConn(true);
     handleAlertData(data);
   } catch (e) {
@@ -4086,6 +4121,7 @@ function tfetch(url, opts = {}, ms = 12000) {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), ms);
   return fetch(url, { ...opts, signal: ac.signal })
+    .then(r => { try { noteStale(url, r); } catch {} return r; })
     .finally(() => clearTimeout(timer));
 }
 
@@ -4434,6 +4470,43 @@ function agoHe(sec) {
   if (sec < 172800) return 'לפני ' + Math.round(sec / 3600) + ' שע׳';
   return 'לפני ' + Math.round(sec / 86400) + ' ימים';
 }
+/* When a source fails, the server answers with its last good response and
+   marks it X-DL-Stale: <age in seconds>. The deck must say so - old data
+   shown without a date reads as current. */
+const STALE = {};      // request key -> { path, at (ms the data is from) }
+const STALE_LABEL = { '/oref/history': 'היסטוריית התרעות', '/idf': 'דובר צה״ל', '/quakes': 'רעידות אדמה',
+  '/markets': 'מדדים', '/flights': 'נתב״ג', '/roads': 'דיווחי כבישים', '/air': 'איכות אוויר',
+  '/fetch': 'חדשות', '/telegram': 'טלגרם' };
+function noteStale(url, r) {
+  const path = String(url).split('?')[0];
+  if (!STALE_LABEL[path]) return;
+  const age = parseInt(r.headers.get('X-DL-Stale') || '', 10);
+  const had = !!STALE[url];
+  if (!isNaN(age)) STALE[url] = { path, at: Date.now() - age * 1000 };
+  else delete STALE[url];
+  if (had !== !!STALE[url] || !isNaN(age)) renderStaleBar();
+}
+function renderStaleBar() {
+  let bar = $('staleBar');
+  const byPath = {};
+  for (const v of Object.values(STALE)) {
+    const g = byPath[v.path] || (byPath[v.path] = { n: 0, at: v.at });
+    g.n++; g.at = Math.min(g.at, v.at);
+  }
+  const parts = Object.entries(byPath).map(([path, g]) =>
+    `${STALE_LABEL[path]}${g.n > 1 ? ' (' + g.n + ')' : ''} · נכון ל-${new Date(g.at).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}`);
+  if (!parts.length) { if (bar) bar.hidden = true; return; }
+  if (!bar) {
+    bar = document.createElement('div'); bar.id = 'staleBar';
+    bar.style.cssText = 'position:fixed;bottom:8px;inset-inline-start:8px;z-index:55;max-width:70vw;padding:5px 12px;border-radius:8px;' +
+      'background:rgba(120,80,0,0.92);border:1px solid #eab308;color:#fff;font:600 12.5px Assistant,Rubik,sans-serif;cursor:pointer';
+    bar.title = 'המקור לא עונה כרגע; מוצגת התשובה התקינה האחרונה שלו. לחיצה לפירוט';
+    bar.addEventListener('click', () => openHealth());
+    document.body.appendChild(bar);
+  }
+  bar.hidden = false;
+  bar.textContent = '⚠ מוצג נתון ישן: ' + parts.join('  |  ');
+}
 async function refreshSysHealth() {
   try {
     const r = await tfetch('/health', { cache: 'no-store' }, 8000);
@@ -4452,7 +4525,8 @@ function renderHealthPill() {
   const stFail = (d.selftest && d.selftest.failed) || [];
   const brainBad = d.brain && d.brain.up && d.brain.health && d.brain.health.failing;
   const n = new Set([...down.map(x => x.label), ...stFail]).size + (brainBad ? 1 : 0);
-  pill.classList.add(critical.length ? 'h-bad' : n ? 'h-warn' : 'h-ok');
+  const critTest = (d.selftest && d.selftest.criticalFailed) || [];
+  pill.classList.add(critical.length || critTest.length ? 'h-bad' : n ? 'h-warn' : 'h-ok');
   $('healthVal').textContent = n ? String(n) : '✓';
   pill.title = n ? 'מקורות בתקלה: ' + [...new Set([...down.map(x => x.label), ...stFail])].join(' · ') + ' — לחיצה לפירוט'
                  : 'כל המקורות עונים — לחיצה לפירוט';
@@ -4609,6 +4683,7 @@ $('archiveClose').addEventListener('click', () => { $('archiveOverlay').hidden =
 function parseLines(text, n) {
   return String(text || '').split('\n').map(l => l.split('|').map(x => x.trim())).filter(a => a[0] && a.length >= n);
 }
+let _setBase = null, _setPrev = { tv: [], off: [] };
 function renderSettings(resp) {
   const c = resp.config, p = c.prefs || {}, body = $('settingsBody');
   const j = (v, d) => { try { return v == null ? d : JSON.parse(v); } catch { return d; } };
@@ -4642,7 +4717,7 @@ function renderSettings(resp) {
       <label>אזור <select id="setRegion">${opt('all', 'הכול', (p['dl-news-region'] || 'all') === 'all')}${opt('il', 'ישראל', p['dl-news-region'] === 'il')}${opt('world', 'עולם', p['dl-news-region'] === 'world')}</select></label>
       <label><input type="checkbox" id="setRelevant"${p['dl-news-relevant'] === '0' ? '' : ' checked'}> רק ידיעות רלוונטיות</label>
       <label>גודל גופן <select id="setFont">${[0.9, 1, 1.1, 1.2, 1.35].map(v => opt(v, Math.round(v * 100) + '%', Math.abs(v - c.display.fontScale) < 0.01)).join('')}</select></label>
-      <label><input type="checkbox" id="setSound"${p['dl-sound'] === 'off' ? '' : ' checked'}> צליל התרעה</label>
+      <label title="הגדרה של המסך הזה בלבד"><input type="checkbox" id="setSound"${localStorage.getItem('dl-sound') === 'off' ? '' : ' checked'}> צליל התרעה במסך הזה</label>
     </div>
     <div class="set-help">מקורות RSS נוספים, שורה לכל מקור: <b>שם | כתובת RSS | il או world</b>.</div>
     <textarea id="setCustomNews" placeholder="שם המקור | https://example.com/rss.xml | il">${esc((c.news.custom || []).map(x => x.name + ' | ' + x.url + ' | ' + x.region).join('\n'))}</textarea>
@@ -4663,12 +4738,19 @@ function renderSettings(resp) {
     <div class="set-help">שורה לכל מדד: <b>סימול Yahoo Finance | שם לתצוגה</b>.</div>
     <textarea id="setMarkets">${esc(c.markets.map(m => m[0] + ' | ' + m[1]).join('\n'))}</textarea>`;
   $('setSave').disabled = !resp.writable; $('setImport').disabled = !resp.writable; $('setReset').disabled = !resp.writable;
+  // ids that are stored but have no checkbox here (Telegram sources, channels
+  // from another version) must survive a save untouched
+  _setPrev = { tv: j(p['dl-tv'], null), off: j(p['dl-news-off'], []) };
+  _setBase = collectSettings();
 }
 function collectSettings() {
   const city = $('setCity').value;
   const entry = CITY_PICK.find(x => x[0] === city);
-  const tv = [...document.querySelectorAll('#settingsBody [data-ch]')].filter(x => x.checked).map(x => x.dataset.ch);
-  const off = [...document.querySelectorAll('#settingsBody [data-src]')].filter(x => !x.checked).map(x => x.dataset.src);
+  const chBoxes = [...document.querySelectorAll('#settingsBody [data-ch]')];
+  const srcBoxes = [...document.querySelectorAll('#settingsBody [data-src]')];
+  const shownCh = new Set(chBoxes.map(x => x.dataset.ch)), shownSrc = new Set(srcBoxes.map(x => x.dataset.src));
+  const tv = [...(_setPrev.tv || []).filter(id => !shownCh.has(id)), ...chBoxes.filter(x => x.checked).map(x => x.dataset.ch)];
+  const off = [...(_setPrev.off || []).filter(id => !shownSrc.has(id)), ...srcBoxes.filter(x => !x.checked).map(x => x.dataset.src)];
   const num = id => { const v = parseFloat($(id).value); return isNaN(v) ? null : v; };
   const shelter = num('setShelter');
   const rush = $('setRush').value.split(',').map(t => t.trim().split('-').map(n => parseInt(n, 10)))
@@ -4685,7 +4767,6 @@ function collectSettings() {
       'dl-news-off': JSON.stringify(off),
       'dl-news-region': $('setRegion').value,
       'dl-news-relevant': $('setRelevant').checked ? '1' : '0',
-      'dl-sound': $('setSound').checked ? 'on' : 'off',
     },
     channels: { custom: parseLines($('setCustomCh').value, 2).map(a => ({ name: a[0], src: a[1], type: /\.m3u8(\?|$)/i.test(a[1]) ? 'hls' : 'iframe' })) },
     news: { custom: parseLines($('setCustomNews').value, 2).map(a => ({ name: a[0], url: a[1], region: a[2] === 'world' ? 'world' : 'il' })) },
@@ -4701,8 +4782,18 @@ async function postConfig(payload) {
   if (!d.ok) throw new Error(d.message || ('HTTP ' + r.status));
   return d;
 }
-function applyPrefsLocally(prefs) {     // the file is saved; make this browser agree before reloading
+// only what differs from the screen as it was opened
+function settingsDiff(base, now) {
+  const out = {}, same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const prefs = {};
+  for (const k of Object.keys(now.prefs)) if (!same(base.prefs[k], now.prefs[k])) prefs[k] = now.prefs[k];
+  if (Object.keys(prefs).length) out.prefs = prefs;
+  for (const k of ['channels', 'news', 'markets', 'traffic', 'display']) if (!same(base[k], now[k])) out[k] = now[k];
+  return out;
+}
+function applyPrefsLocally(prefs, onlyGiven) {     // the file is saved; make this browser agree before reloading
   for (const k of CFG_SYNC_KEYS) {
+    if (onlyGiven && !(k in prefs)) continue;
     try { if (prefs[k] == null) LS_RAW.rem.call(localStorage, k); else LS_RAW.set.call(localStorage, k, String(prefs[k])); } catch {}
   }
   try { LS_RAW.rem.call(localStorage, 'dl-ipgeo'); } catch {}
@@ -4722,16 +4813,26 @@ $('settingsBtn').addEventListener('click', openSettings);
 $('settingsClose').addEventListener('click', () => { $('settingsOverlay').hidden = true; });
 $('setSave').addEventListener('click', async () => {
   try {
-    const patch = collectSettings();
-    // a channel added just now should be visible without a second visit
-    const d = await postConfig({ patch });
-    const prefs = { ...patch.prefs };
-    const tv = new Set(JSON.parse(prefs['dl-tv'] || '[]'));
-    const before = new Set(CHANNELS.map(c => c.id));
-    for (const c of (d.config.channels.custom || [])) if (!before.has(c.id)) tv.add(c.id);
-    prefs['dl-tv'] = JSON.stringify([...tv]);
-    if (prefs['dl-tv'] !== patch.prefs['dl-tv']) await postConfig({ patch: { prefs: { 'dl-tv': prefs['dl-tv'] } } });
-    applyPrefsLocally(prefs);
+    const now = collectSettings();
+    const patch = settingsDiff(_setBase || now, now);
+    // the siren sound belongs to this screen, not to the shared file
+    const soundNow = $('setSound').checked ? 'on' : 'off';
+    const soundChanged = (localStorage.getItem('dl-sound') === 'off' ? 'off' : 'on') !== soundNow;
+    if (!Object.keys(patch).length && !soundChanged) { $('setMsg').textContent = 'אין שינויים לשמור.'; return; }
+    const prefs = { ...(patch.prefs || {}) };
+    if (Object.keys(patch).length) {
+      const d = await postConfig({ patch });
+      // a channel added just now should be visible without a second visit
+      const before = new Set(CHANNELS.map(c => c.id));
+      const added = (d.config.channels.custom || []).map(c => c.id).filter(id => !before.has(id));
+      if (added.length) {
+        const tv = [...new Set([...JSON.parse(now.prefs['dl-tv'] || '[]'), ...added])];
+        prefs['dl-tv'] = JSON.stringify(tv);
+        await postConfig({ patch: { prefs: { 'dl-tv': prefs['dl-tv'] } } });
+      }
+    }
+    applyPrefsLocally(prefs, true);
+    try { LS_RAW.set.call(localStorage, 'dl-sound', soundNow); } catch {}
     $('setMsg').textContent = 'נשמר. טוען מחדש…';
     setTimeout(() => location.reload(), 500);
   } catch (e) { $('setMsg').textContent = 'לא נשמר: ' + e.message; }
@@ -4776,7 +4877,7 @@ document.addEventListener('keydown', e => {
   if (!$('archiveOverlay').hidden) $('archiveOverlay').hidden = true;
 });
 
-const DL_BUILD = '17.11-76';
+const DL_BUILD = '17.11-77';
 console.log('%cDispatch LIVE build ' + DL_BUILD, 'color:#22d3ee;font-weight:bold');
 const TENSION_W = { alerts: 0.50, idf: 0.20, news: 0.30 };  // component weights
 const TENSION_BASELINE = 12;   // structural background level for Israel

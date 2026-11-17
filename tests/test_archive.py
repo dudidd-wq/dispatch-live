@@ -6,7 +6,7 @@ import dlarchive, server
 
 
 def stamp(hours_ago):
-    return (datetime.now() - timedelta(hours=hours_ago)).strftime("%Y-%m-%d %H:%M:%S")
+    return (dlarchive.il_now() - timedelta(hours=hours_ago)).strftime("%Y-%m-%d %H:%M:%S")
 
 
 class Base(unittest.TestCase):
@@ -25,6 +25,28 @@ class TestAlerts(Base):
         self.assertEqual(dlarchive.add_alerts(rows), 1)
         self.assertEqual(dlarchive.add_alerts(rows), 0)            # every poll repeats the same rows
         self.assertEqual(len(dlarchive.recent_alerts()), 1)
+
+    def test_rows_without_a_category_are_not_stored_again_on_every_poll(self):
+        row = [{"alertDate": stamp(1), "title": "t", "data": "A", "category": None}]
+        for _ in range(3):
+            dlarchive.add_alerts(row)
+        got = dlarchive.recent_alerts()
+        self.assertEqual(len(got), 1); self.assertIsNone(got[0]["category"])
+
+    def test_impossible_dates_are_rejected(self):
+        self.assertEqual(dlarchive.add_alerts([{"alertDate": "9999-99-99 99:99:99", "data": "A", "category": 1},
+                                               {"alertDate": "not a date at all!", "data": "B", "category": 1}]), 0)
+
+    def test_a_locked_database_fails_fast(self):
+        import sqlite3, time
+        dlarchive.add_alerts([{"alertDate": stamp(1), "title": "t", "data": "A", "category": 1}])
+        other = sqlite3.connect(dlarchive.DB_PATH); other.execute("BEGIN EXCLUSIVE")
+        try:
+            t0 = time.time()
+            dlarchive.add_alerts([{"alertDate": stamp(2), "title": "t", "data": "B", "category": 1}])
+            self.assertLess(time.time() - t0, 3.0)
+        finally:
+            other.rollback(); other.close()
 
     def test_bad_rows_are_skipped_not_fatal(self):
         self.assertEqual(dlarchive.add_alerts([{"alertDate": "", "data": "x"}, {"foo": 1}, None and {}]), 0)

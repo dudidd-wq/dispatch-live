@@ -78,10 +78,47 @@ const PORT = process.env.PORT || '3187';
     await page.click('#setSave');
     await page.waitForTimeout(5000);
     const st = await page.evaluate(() => ({ min: CFG.traffic.minDelay,
-      custom: CHANNELS.filter(c => c.custom).map(c => c.name), on: state.tvOn.has('custom1') }));
+      custom: CHANNELS.filter(c => c.custom).map(c => c.name), on: CHANNELS.filter(c => c.custom).every(c => state.tvOn.has(c.id)) }));
     console.log('settings', JSON.stringify(st));
     if (st.min !== 13) fail('saved threshold did not survive the reload');
     if (st.custom[0] !== 'Test' || !st.on) fail('custom channel missing after save');
+
+    // a broken alert feed must never read as "quiet"
+    for (const [name, body, wantDown] of [['quiet', '[]', false], ['active', '{"id":"1","title":"t","data":["x"],"desc":"d"}', false],
+                                          ['html', '<!DOCTYPE html><title>moved</title>', true], ['null', 'null', true],
+                                          ['other-json', '{"message":"moved"}', true]]) {
+      await page.route('**/oref/alerts', r => r.fulfill({ status: 200, contentType: 'application/json', body }));
+      await page.evaluate(() => orefConn(true));
+      for (let i = 0; i < 7; i++) await page.evaluate(() => pollAlerts());      // the deck declares an outage after 6 misses
+      const down = await page.evaluate(() => !!state.orefDown);
+      console.log('alert-shape', name, 'down=' + down);
+      if (down !== wantDown) fail('alert feed shape "' + name + '": orefDown=' + down + ', expected ' + wantDown);
+      await page.unroute('**/oref/alerts');
+    }
+    await page.evaluate(() => { hideTakeover && hideTakeover(); });
+
+    // an old answer must be labelled as old
+    await page.evaluate(async () => { await tfetch('/quakes'); });
+    await page.route('**/quakes', r => r.fulfill({ status: 200, contentType: 'application/json', body: '[]',
+      headers: { 'X-DL-Stale': '1800' } }));
+    await page.evaluate(async () => { await tfetch('/quakes'); });
+    const bar = await page.evaluate(() => { const b = document.getElementById('staleBar'); return b && !b.hidden ? b.textContent : ''; });
+    console.log('stale bar:', bar);
+    if (!bar.includes('רעידות אדמה')) fail('stale data is not labelled');
+    await page.unroute('**/quakes');
+
+    // hostile stored preferences must not take the page down
+    const ctx2 = await browser.newContext();
+    const p2 = await ctx2.newPage();
+    const errors2 = [];
+    p2.on('pageerror', e => errors2.push(e.message));
+    await p2.addInitScript(() => { try { localStorage.setItem('dl-tv', '"ch11"'); localStorage.setItem('dl-news-off', '{}'); } catch {} });
+    await p2.goto('http://127.0.0.1:' + PORT + '/', { waitUntil: 'domcontentloaded' });
+    await p2.waitForTimeout(2500);
+    const alive = await p2.evaluate(() => typeof state === 'object' && state.tvOn.size > 0 && typeof pollAlerts === 'function');
+    console.log('hostile prefs: alive=' + alive, errors2.slice(0, 2));
+    if (!alive || errors2.length) fail('bad stored preferences broke the page: ' + errors2.join(' | '));
+    await ctx2.close();
 
     const tag = await page.evaluate(() => [DL_BUILD, document.querySelector('.build-tag').textContent]);
     if ('v' + tag[0] !== tag[1]) fail('build tag mismatch ' + tag.join(' / '));

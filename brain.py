@@ -497,28 +497,56 @@ def _note_failure(e):
             pass
 
 
+_verify_gate = threading.Lock()
+
+
 def verify(reason="scheduled", n=None, force_all=False):
-    """Buy the truth for a prioritised batch, learn from it, record the spend."""
+    """Buy the truth for a prioritised batch, learn from it, record the spend.
+
+    One verification at a time, and every call is paid for BEFORE it is made.
+    Until v77 the budget was checked once up front and spent afterwards, so
+    simultaneous /verify requests each passed the check and together overshot
+    the cap (12 requests at cap-19 sent 228 calls)."""
     key = api_key()
     if not key:
         return {"ok": False, "why": "no_key"}
+    if not _verify_gate.acquire(blocking=False):
+        return {"ok": False, "why": "busy"}
+    try:
+        return _verify_locked(key, reason, n, force_all)
+    finally:
+        _verify_gate.release()
+
+
+def _verify_locked(key, reason, n, force_all):
+    scheduled = (reason == "scheduled")
     batch = pick_batch(n or batch_size(), force_all)
     with _lock:
-        if budget_left(scheduled=(reason == "scheduled")) < len(batch):
+        if budget_left(scheduled=scheduled) < 1:
             return {"ok": False, "why": "budget"}
     now = datetime.now()
     got = 0
     for i in batch:
         seg = SEGMENTS[i]
+        with _lock:
+            if budget_left(scheduled=scheduled) < 1:
+                break                                  # the cap is a wall, not a suggestion
+            STATE["usedMonth"] += 1                    # an attempt is a spend
+            STATE["usedDay"] += 1
         try:
             dur, stat = _call_routes(key, seg)
         except Exception as e:
             _note_failure(e)
+            # Google does not bill a request it refused outright (bad key,
+            # API disabled). Anything else - timeout, 5xx, a reply we could
+            # not parse - may have been billed and stays counted.
+            if isinstance(e, urllib.error.HTTPError) and e.code in (400, 401, 403):
+                with _lock:
+                    STATE["usedMonth"] = max(0, STATE["usedMonth"] - 1)
+                    STATE["usedDay"] = max(0, STATE["usedDay"] - 1)
             continue
         ratio = dur / stat
         with _lock:
-            STATE["usedMonth"] += 1
-            STATE["usedDay"] += 1
             observe(i, now, ratio, stat)
             STATE["lastMeasure"][str(i)] = {
                 "t": time.time(), "ratio": round(ratio, 3),
@@ -815,7 +843,9 @@ def main():
     print("=" * 58)
     print(" Leave this window open. Minimising is fine.")
     print("")
-    Server(("0.0.0.0", PORT), Handler).serve_forever()
+    # This machine only. The deck is the brain's single client, and /verify and
+    # /trigger spend money: they have no business being reachable from the LAN.
+    Server(("127.0.0.1", PORT), Handler).serve_forever()
 
 
 if __name__ == "__main__":

@@ -97,3 +97,65 @@ class TestFailureReporting(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBudgetIsAWall(Base):
+    """The cap must hold under simultaneous requests and count what was sent."""
+
+    def setUp(self):
+        Base.setUp(self)
+        self._call, self._root = brain._call_routes, brain.ROOT
+        brain.ROOT = self.tmp
+        open(os.path.join(self.tmp, "google.key"), "w").write("test-key")
+        brain._roll_periods()
+        self.sent = 0
+
+    def tearDown(self):
+        brain._call_routes, brain.ROOT = self._call, self._root
+
+    def _fake(self, fail=None):
+        import threading, time
+        lock = threading.Lock()
+        def call(key, seg):
+            with lock:
+                self.sent += 1
+            time.sleep(0.002)
+            if fail:
+                raise fail
+            return 600.0, 500.0
+        brain._call_routes = call
+
+    def test_simultaneous_verifies_never_pass_the_cap(self):
+        import threading
+        self._fake()
+        brain.STATE["usedMonth"] = brain.MONTHLY_CAP - 19
+        ts = [threading.Thread(target=brain.verify, kwargs={"reason": "manual", "n": 19, "force_all": True})
+              for _ in range(12)]
+        for t in ts: t.start()
+        for t in ts: t.join()
+        for _ in range(6):                              # and again, one after the other
+            brain.verify(reason="manual", n=19, force_all=True)
+        self.assertLessEqual(brain.STATE["usedMonth"], brain.MONTHLY_CAP)
+        self.assertLessEqual(self.sent, 19)
+
+    def test_calls_that_may_have_been_billed_are_counted(self):
+        self._fake(fail=TimeoutError("timed out"))
+        brain.verify(reason="manual", n=3, force_all=False)
+        self.assertEqual(brain.STATE["usedMonth"], self.sent)
+        self.assertGreater(self.sent, 0)
+
+    def test_calls_google_refused_outright_are_not_counted(self):
+        self._fake(fail=urllib.error.HTTPError("u", 400, "bad key", {}, io.BytesIO(b"{}")))
+        brain.verify(reason="manual", n=3, force_all=False)
+        self.assertEqual(brain.STATE["usedMonth"], 0)
+        self.assertGreater(self.sent, 0)
+
+    def test_zero_cap_means_no_calls(self):
+        self._fake()
+        cap = brain.MONTHLY_CAP
+        try:
+            brain.MONTHLY_CAP = 0
+            self.assertEqual(brain.verify(reason="manual", n=3)["why"], "budget")
+            self.assertEqual(self.sent, 0)
+        finally:
+            brain.MONTHLY_CAP = cap

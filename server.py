@@ -404,7 +404,11 @@ def fetch_oref(url):
     except Exception as e:
         result = (False, 502, '{"error":"oref fetch failed: %s"}' % str(e).replace('"', "'"))
     finally:
-        _oref_shared[url] = (time.time(), result)   # publish before releasing the slot
+        now = time.time()
+        if len(_oref_shared) > 40:                  # one entry per URL ever fetched otherwise
+            for k in [k for k, v in list(_oref_shared.items()) if now - v[0] > 30]:
+                _oref_shared.pop(k, None)
+        _oref_shared[url] = (now, result)           # publish before releasing the slot
         _end_fetch(url)
     return result
 
@@ -447,6 +451,30 @@ def _normalize_oref_api(text):
 
 
 _hist_week = {"t": 0.0, "rows": None}
+_backfill = {"t": 0.0}
+
+
+def _archive_async(rows):
+    """Archive writes never ride on a request thread."""
+    threading.Thread(target=dlarchive.add_alerts, args=(list(rows),), daemon=True).start()
+
+
+def _backfill_archive(now):
+    """Twice a day, pull Oref's last month into the local archive. Without it
+    the archive only knows what was polled while this PC was on, and a week
+    summary would silently show part of the picture."""
+    if now - _backfill["t"] < 12 * 3600:
+        return
+    _backfill["t"] = now
+
+    def run():
+        ok, _s, text = fetch_oref(OREF_HISTORY_API % "lastMonth")
+        rows = _normalize_oref_api(text) if ok else None
+        if rows:
+            dlarchive.add_alerts(rows)
+        elif rows is None:
+            _backfill["t"] = now - 12 * 3600 + 900       # failed: try again in 15 minutes
+    threading.Thread(target=run, daemon=True).start()
 _hist_status = {"source": "", "at": 0.0, "rows": 0, "error": ""}
 
 
@@ -465,8 +493,9 @@ def fetch_oref_history():
     rows = _normalize_oref_api(text) if ok else None
     if rows is not None:
         api_seen = True
+        _backfill_archive(now)
         if rows:
-            dlarchive.add_alerts(rows)
+            _archive_async(rows)
             _hist_status.update(source="api:lastDay", at=now, rows=len(rows), error="")
             return True, 200, _json.dumps(rows, ensure_ascii=False)
         if _hist_week["rows"] is None or now - _hist_week["t"] > 600:
@@ -474,7 +503,9 @@ def fetch_oref_history():
             wk = _normalize_oref_api(text2) if ok2 else None
             if wk is not None:
                 _hist_week.update(t=now, rows=wk)
-                dlarchive.add_alerts(wk)
+                _archive_async(wk)
+            elif now - _hist_week["t"] > 1800:
+                _hist_week.update(rows=None)        # a week list we cannot refresh is not "the last week"
         if _hist_week["rows"]:
             _hist_status.update(source="api:lastWeek", at=now,
                                 rows=len(_hist_week["rows"]), error="")
@@ -497,6 +528,11 @@ def fetch_oref_history():
             last = (True, 200, "[]")
     if api_seen and not last[0]:
         last = (True, 200, "[]")            # the API answered: genuinely quiet
+    if not api_seen and last == (True, 200, "[]"):
+        # The API did not answer and the legacy file is empty. An empty legacy
+        # file proves nothing (it is empty most of the time): this is an
+        # outage, and reporting it as a quiet day would be a lie.
+        last = (False, 502, '{"error":"oref history API unavailable"}')
     if api_seen and last == (True, 200, "[]"):
         # Oref only goes back a week. Our own archive goes back further, so the
         # last event stays on the map through a quiet stretch.
@@ -643,7 +679,7 @@ def fetch_markets():
         data = _json.dumps(out, ensure_ascii=False)
         _markets_cache.update(t=now, data=data)
         return data
-    return _markets_cache["data"] or '{"error":"markets unavailable"}'
+    return _fresh_or_error(_markets_cache, 900, "markets unavailable")
 
 
 # Waze live-map public feed (no key). Blocked for datacenter IPs but serves
@@ -1418,11 +1454,11 @@ def fetch_air(lat, lng):
            "&timezone=Asia%%2FJerusalem" % (lat, lng))
     ok, _s, text = fetch_oref(url)
     if not ok or not text:
-        return _air_cache["data"] or '{"error":"air unavailable"}'
+        return _fresh_or_error(_air_cache, 900, "air unavailable")
     try:
         c = _json.loads(text)["current"]
     except Exception:
-        return _air_cache["data"] or '{"error":"air unavailable"}'
+        return _fresh_or_error(_air_cache, 900, "air unavailable")
     aqi = c.get("european_aqi")
     dust = c.get("dust") or 0
     pm25 = c.get("pm2_5") or 0
@@ -1469,10 +1505,12 @@ def fetch_roads():
     if _roads_cache["data"] and now - _roads_cache["t"] < 300:
         return _roads_cache["data"]
     items, seen = [], set()
+    answered = 0
     for url, tag in ROADS_SOURCES:
         ok, _s, text = fetch_oref(url)
-        if not ok or not text:
+        if not ok or not text or "<article" not in text:
             continue
+        answered += 1
         for block in re.findall(r"<article.*?</article>", text, re.S):
             m = re.search(r"<h\d[^>]*>(.*?)</h\d>", block, re.S)
             if not m:
@@ -1503,6 +1541,8 @@ def fetch_roads():
             items.append({"title": title, "link": href, "tag": tag,
                           "agoH": round(age_h, 1),
                           "local": bool(ROADS_LOCAL.search(title))})
+    if not answered:
+        return '{"error":"roads unavailable"}'
     if not items:
         # nothing published in the last 24h: that is a real answer, not a fault
         data = _json.dumps({"items": [], "local": 0,
@@ -1586,11 +1626,11 @@ def fetch_flights():
            % FLIGHTS_RES)
     ok, _s, text = fetch_oref(url)
     if not ok or not text:
-        return _flights_cache["data"] or '{"error":"flights unavailable"}'
+        return _fresh_or_error(_flights_cache, 900, "flights unavailable")
     try:
         recs = _json.loads(text)["result"]["records"]
     except Exception:
-        return _flights_cache["data"] or '{"error":"flights unavailable"}'
+        return _fresh_or_error(_flights_cache, 900, "flights unavailable")
     # The board publishes Israel local time. Deriving "now" from the machine
     # clock silently breaks anywhere that is not on Israel time, so ask for
     # the zone explicitly and only fall back to local time if unavailable.
@@ -1763,6 +1803,95 @@ def fetch_idf_spokesperson():
 
 
 
+# The only files the deck ever needs from disk. Everything else the page uses
+# comes from an endpoint. Nothing in this folder besides these is servable.
+STATIC_FILES = {"index.html"}
+_SEGMENT_OK = re.compile(r"^[A-Za-z0-9_\-]+(\.[A-Za-z0-9_\-]+)*$")
+
+
+def static_path(url_path):
+    """Absolute path of a servable file, or None. Pure function so the tests
+    can replay it with Windows path rules."""
+    name = "index.html" if url_path in ("/", "") else url_path
+    if not name.startswith("/") and name != "index.html":
+        return None
+    name = name.lstrip("/")
+    # one plain segment only: no separators, drive letters, streams, short
+    # names, traversal, trailing dots or spaces, control characters
+    if not _SEGMENT_OK.match(name) or name.lower() not in STATIC_FILES:
+        return None
+    full = os.path.join(ROOT, name)
+    try:
+        if os.path.commonpath([os.path.realpath(full), os.path.realpath(ROOT)]) != os.path.realpath(ROOT):
+            return None
+    except Exception:
+        return None
+    return full if os.path.isfile(full) else None
+
+
+def _public_target(url):
+    """True when a /fetch target is an ordinary public web address. The proxy
+    must not be a way to reach this machine or the home network: with it a web
+    page could read /config, poke the Traffic Brain, or probe the router."""
+    import ipaddress
+    try:
+        u = urlparse(url)
+        host = (u.hostname or "").strip().lower()
+        if u.scheme not in ("http", "https") or not host or host == "localhost" or host.endswith(".localhost"):
+            return False
+        for info in socket.getaddrinfo(host, u.port or (443 if u.scheme == "https" else 80),
+                                       type=socket.SOCK_STREAM):
+            ip = ipaddress.ip_address(info[4][0].split("%")[0])
+            if (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast
+                    or ip.is_reserved or ip.is_unspecified):
+                return False
+        return True
+    except Exception:
+        return False
+
+
+def _alert_payload(text):
+    """The live alert feed has exactly two legitimate shapes: an empty list
+    (quiet) or an object carrying a list of localities. Returns the text to
+    hand to the deck, or None when the body is anything else - an HTML "page
+    moved", null, an error object. None is NOT quiet, it is a failure; this is
+    how Oref's history URL died silently in 2026.
+    A non-empty list of alert objects is merged into the one-object shape the
+    deck reads, so it can never be mistaken for the empty "quiet" list."""
+    try:
+        d = json.loads(text)
+    except Exception:
+        return None
+    if isinstance(d, list):
+        if not d:
+            return "[]"
+        if not all(isinstance(x, dict) and isinstance(x.get("data"), list) for x in d):
+            return None
+        cities = []
+        for x in d:
+            cities += [c for c in x["data"] if isinstance(c, str) and c not in cities]
+        merged = dict(d[0])
+        merged["data"] = cities
+        return json.dumps(merged, ensure_ascii=False)
+    if isinstance(d, dict):
+        if isinstance(d.get("data"), list) or isinstance(d.get("cities"), list):
+            return text
+    return None
+
+
+def _valid_alert_payload(text):
+    return _alert_payload(text) is not None
+
+
+def _fresh_or_error(cache, max_age, message):
+    """A fetcher's own cache may cover a failure only briefly. Older than
+    max_age it must report the failure, so the last-good-answer layer can
+    serve it MARKED as old instead of passing it off as current."""
+    if cache.get("data") and time.time() - cache.get("t", 0) <= max_age:
+        return cache["data"]
+    return '{"error":"%s"}' % message
+
+
 # ============================================================
 #   LAST GOOD ANSWER
 #   ----------------------------------------------------------
@@ -1846,7 +1975,7 @@ def _health_key(path, query):
     try:
         if path == "/telegram":
             ch = (parse_qs(query or "").get("ch") or [""])[0][:40]
-            return ("tg:" + ch, "טלגרם · " + ch, False) if ch else None
+            return ("tg:" + ch, "טלגרם · " + ch, False) if ch in TG_CHANNELS else None
         if path == "/fetch":
             host = urlparse((parse_qs(query or "").get("url") or [""])[0]).netloc.lower()[:60]
             if host.startswith("www."):
@@ -1860,6 +1989,8 @@ def _health_key(path, query):
 def health_note(sid, label, ok, ms, err="", critical=False, stale=None):
     now = time.time()
     with _health_lock:
+        if sid not in _health and len(_health) >= 120:
+            return                       # bounded: unknown keys cannot grow this without limit
         h = _health.setdefault(sid, {"id": sid, "label": label, "critical": critical,
                                      "ok": None, "lastOk": 0, "lastFail": 0, "lastTry": 0,
                                      "ms": 0, "error": "", "okCount": 0, "failCount": 0,
@@ -1919,7 +2050,9 @@ def health_snapshot():
                   "budget": brain.get("budget"), "checkedAt": brain.get("checkedAt")},
         "selftest": {"at": st["at"], "ago": _fmt_age(st["at"], now), "running": st["running"],
                      "results": st["results"],
-                     "failed": [r["label"] for r in st["results"] if r["ok"] is False]},
+                     "failed": [r["label"] for r in st["results"] if r["ok"] is False],
+                     "criticalFailed": [r["label"] for r in st["results"]
+                                        if r["ok"] is False and r.get("critical")]},
     }
 
 
@@ -1948,10 +2081,9 @@ def _probe_oref_alerts():
     ok, st, text = fetch_oref(OREF_ALERTS)
     if not ok:
         return False, _why(text)
-    d = _j(text)
-    if isinstance(d, list) or (isinstance(d, dict) and ("data" in d or not d)):
-        return True, "אין התרעה פעילה" if not d else "התרעה פעילה"
-    return False, "מבנה לא צפוי: " + text[:80]
+    if not _valid_alert_payload(text):
+        return False, "מבנה לא צפוי: " + text[:80]
+    return True, "אין התרעה פעילה" if _j(text) == [] else "התרעה פעילה"
 
 
 def _probe_oref_history():
@@ -2035,6 +2167,7 @@ def run_selftest():
             except Exception as e:
                 ok, detail = False, "%s: %s" % (type(e).__name__, str(e)[:120])
             results.append({"id": sid, "label": label, "ok": ok, "detail": detail,
+                            "critical": sid in ("oref_alerts", "oref_history"),
                             "ms": int((time.time() - t0) * 1000)})
         _selftest.update(at=time.time(), results=results)
         bad = [r for r in results if r["ok"] is False]
@@ -2053,6 +2186,20 @@ def _selftest_loop():
         except Exception:
             pass
         time.sleep(24 * 3600)
+
+
+def _same_origin(handler):
+    """A browser request from a page of ours: no Origin header (same-origin
+    GET/POST from old browsers, curl) or an Origin whose host is the Host we
+    were addressed as."""
+    try:
+        origin = handler.headers.get("Origin")
+        if not origin:
+            return True
+        host = (handler.headers.get("Host") or "").split(":")[0].lower().strip("[]")
+        return (urlparse(origin).hostname or "").lower() == host
+    except Exception:
+        return False
 
 
 def _is_local_request(handler):
@@ -2112,7 +2259,7 @@ class Handler(BaseHTTPRequestHandler):
     def _send(self, status, body, content_type, extra=None):
         self._resp = (status, body[:240])      # what the health wrapper inspects
         if isinstance(body, str):
-            body = body.encode("utf-8")
+            body = body.encode("utf-8", "replace")
         hk, cid = getattr(self, "_hkey", None), getattr(self, "_cache_id", None)
         if hk and cid and hk[0] not in STALE_NEVER:
             if _error_of(status, body):
@@ -2149,9 +2296,19 @@ class Handler(BaseHTTPRequestHandler):
         _touch_activity()
         parsed = urlparse(self.path)
         if parsed.path == "/state":
+            # The view-state relay is used by other screens on the LAN, so it is
+            # not localhost-only - but a foreign web page has no business here,
+            # and the body is a few hundred bytes.
+            if not _same_origin(self):
+                self._send(403, '{"ok":false}', "application/json; charset=utf-8")
+                return
             try:
                 length = int(self.headers.get("Content-Length", 0))
+                if length < 0 or length > 65536:
+                    self._send(413, '{"ok":false}', "application/json; charset=utf-8")
+                    return
                 body = self.rfile.read(length).decode("utf-8", "replace") if length else "{}"
+                json.loads(body)
                 SHARED_STATE["json"] = body
             except Exception:
                 pass
@@ -2210,8 +2367,9 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             status, body = self._resp or (599, "no response")
             err = _error_of(status, body)
-            health_note(key[0], key[1], not err, (time.time() - t0) * 1000, err, key[2],
-                        stale=self._stale)
+            if self._hkey is not None:       # the route may decide this was not a source request
+                health_note(key[0], key[1], not err, (time.time() - t0) * 1000, err, key[2],
+                            stale=self._stale)
             self._hkey = self._cache_id = None
 
     def _route_get(self):
@@ -2224,7 +2382,8 @@ class Handler(BaseHTTPRequestHandler):
                        {"Access-Control-Allow-Origin": "*", "Cache-Control": "no-store"})
             return
         if parsed.path == "/selftest":
-            if "run" in (parsed.query or "") and not _selftest["running"]:
+            if ("run" in (parsed.query or "") and not _selftest["running"]
+                    and time.time() - _selftest["at"] > 45 and _same_origin(self)):
                 threading.Thread(target=run_selftest, daemon=True).start()
             self._send(200, json.dumps({"at": _selftest["at"], "running": True if "run" in (parsed.query or "") else _selftest["running"],
                                         "results": _selftest["results"]}, ensure_ascii=False),
@@ -2321,13 +2480,14 @@ class Handler(BaseHTTPRequestHandler):
             # so a stale browser cannot fake it.
             import json as _json
             import time as _t
-            info = {"serverFile": os.path.abspath(__file__)}
+            local = _is_local_request(self)
+            info = {"serverFile": os.path.abspath(__file__) if local else "(shown on this computer only)"}
             try:
                 p = os.path.join(ROOT, "index.html")
                 raw = open(p, encoding="utf-8", errors="replace").read()
                 m = re.search(r"DL_BUILD = '([^']+)'", raw)
                 info.update({
-                    "indexPath": p,
+                    "indexPath": p if local else "(shown on this computer only)",
                     "buildOnDisk": m.group(1) if m else "NOT FOUND",
                     "sizeBytes": os.path.getsize(p),
                     "modified": _t.strftime("%d/%m/%Y %H:%M:%S",
@@ -2405,6 +2565,10 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/oref/alerts" or parsed.path == "/oref/history":
             if parsed.path == "/oref/alerts":
                 ok, status, text = fetch_oref(OREF_ALERTS)
+                if ok:
+                    shaped = _alert_payload(text)
+                    ok, text = ((True, shaped) if shaped is not None else
+                                (False, '{"error":"oref alerts: unexpected response shape"}'))
             else:
                 ok, status, text = fetch_oref_history()
             self._send(
@@ -2439,28 +2603,25 @@ class Handler(BaseHTTPRequestHandler):
             if not target or not re.match(r"^https?://", target, re.I):
                 self._send(400, "Bad or missing url param", "text/plain; charset=utf-8")
                 return
+            if not _public_target(target):
+                self._hkey = None            # not a source: keep it out of the health table
+                self._send(400, "Only public web addresses can be fetched", "text/plain; charset=utf-8")
+                return
             ok, status, text = fetch_upstream(target)
             self._send(
                 200 if ok else 502,
                 text,
                 "text/plain; charset=utf-8",
-                {"Access-Control-Allow-Origin": "*", "Cache-Control": "no-store"},
+                {"Cache-Control": "no-store"},       # same-origin only: no CORS grant on the proxy
             )
             return
 
         # ---- static files ----
-        path = "/index.html" if parsed.path == "/" else parsed.path
-        # Prevent directory traversal
-        safe = os.path.normpath(path).lstrip("/\\")
-        file_path = os.path.join(ROOT, safe)
-        # Secrets and runtime state are never static files. Until v74
-        # /google.key was served like any other file - in NETWORK mode to
-        # every device on the Wi-Fi.
-        base = os.path.basename(file_path).lower()
-        blocked = (base.endswith(".key") or base.startswith("config.local")
-                   or base.startswith(".")
-                   or safe.replace("\\", "/").split("/")[0].lower() in ("data", "logs", "backup", ".git", ".github", "tests"))
-        if blocked or not file_path.startswith(ROOT) or not os.path.isfile(file_path):
+        # Allow-list, not block-list. The v74 block-list missed Windows path
+        # semantics: "/google.key." (trailing dot), "::$DATA" streams, 8.3
+        # short names and drive-relative paths all resolve to the real file.
+        file_path = static_path(parsed.path)
+        if not file_path:
             self._send(404, "Not found", "text/plain; charset=utf-8")
             return
         ext = os.path.splitext(file_path)[1].lower()

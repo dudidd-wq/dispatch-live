@@ -30,6 +30,9 @@ jobs:
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    concurrency:
+      group: release
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:
@@ -38,19 +41,24 @@ jobs:
         id: v
         run: |
           build=$(grep -o "const DL_BUILD = '[^']*'" index.html | cut -d"'" -f2)
-          test -n "$build"
-          n=${build##*-}
+          # dd.mm-NN exactly; anything else is a mistake, not a release
+          echo "$build" | grep -Eq '^[0-9]{2}\.[0-9]{2}-[0-9]+$'
           echo "build=$build" >> "$GITHUB_OUTPUT"
-          echo "tag=v$n" >> "$GITHUB_OUTPUT"
+          # the whole build string: the counter alone is not unique across dates
+          echo "tag=v$build" >> "$GITHUB_OUTPUT"
       - name: Skip when this build is already released
         id: exists
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view "${{ steps.v.outputs.tag }}" >/dev/null 2>&1; then
+          code=$(gh api "repos/${{ github.repository }}/releases/tags/${{ steps.v.outputs.tag }}" --silent --include 2>/dev/null | head -1 | awk '{print $2}')
+          if [ "$code" = "200" ]; then
             echo "yes=true" >> "$GITHUB_OUTPUT"
-          else
+          elif [ "$code" = "404" ]; then
             echo "yes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Could not tell whether the release exists (HTTP '$code'); refusing to guess." >&2
+            exit 1
           fi
       - name: Build the install zip
         if: steps.exists.outputs.yes == 'false'
@@ -59,9 +67,9 @@ jobs:
           cp index.html server.py brain.py dlconfig.py dlarchive.py *.bat *.sh *.command README.md CHANGELOG.md out/dispatch-live-app/
           cp -r docs out/dispatch-live-app/docs
           (cd out && zip -qr ../dispatch-live-app.zip dispatch-live-app)
-          # release notes = this build's section of the changelog
-          awk -v b="${{ steps.v.outputs.build }}" '
-            /^## /{ if (on) exit; on = index($0, b) > 0; next } on' CHANGELOG.md > notes.md
+          # release notes = this build's section of the changelog (exact heading match)
+          awk -v h="v${{ steps.v.outputs.build }}" '
+            /^## /{ if (on) exit; on = ($2 == h); next } on' CHANGELOG.md > notes.md
           test -s notes.md || echo "Build ${{ steps.v.outputs.build }}" > notes.md
       - name: Publish the release
         if: steps.exists.outputs.yes == 'false'

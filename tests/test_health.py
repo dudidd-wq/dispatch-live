@@ -113,3 +113,64 @@ class TestSelfTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestStaticAllowList(unittest.TestCase):
+    """Replays the static-file rule the way Windows would resolve the names."""
+
+    TRICKS = ["/google.key", "/google.key.", "/google.key ", "/GOOGLE.KEY", "/google.key::$DATA", "/GOOGLE~1.KEY",
+              "/CONFIG~1.JSO", "/config.local.json", "/config.local.json.", "/data/archive.db", "/data./archive.db",
+              "/logs./server.log", "/C:data/archive.db", "/C:/Users/x/app/data/state.json", "/..%2fgoogle.key",
+              "/../google.key", "/./google.key", "//google.key", "/index.html/../google.key", "/index.html.",
+              "/index.html::$DATA", "/index.html%00.key", "/.gitignore", "/server.py", "/dlconfig.py", "/brain.py",
+              "/tests/test_oref.py", "/backup/x", "\\google.key", "/index.html\\..\\google.key", "/INDEX~1.HTM"]
+
+    def test_only_the_page_is_servable(self):
+        for t in self.TRICKS:
+            self.assertIsNone(server.static_path(t), t)
+        for ok in ("/", "/index.html"):
+            self.assertTrue(server.static_path(ok).endswith("index.html"), ok)
+
+    def test_no_trick_survives_windows_name_resolution(self):
+        # Windows drops trailing dots and spaces and resolves streams and
+        # drive-relative names; whatever passes the rule must be index.html
+        import ntpath
+        for t in self.TRICKS + ["/index.html", "/"]:
+            p = server.static_path(t)
+            if p:
+                self.assertEqual(ntpath.basename(ntpath.normpath(p)).rstrip(". ").lower(), "index.html")
+
+
+class TestProxyTargets(unittest.TestCase):
+    def test_the_proxy_does_not_reach_this_machine_or_the_home_network(self):
+        for bad in ("http://127.0.0.1:3100/config", "http://localhost:3200/trigger", "http://[::1]:3100/",
+                    "http://192.168.1.1/", "http://10.0.0.5/x", "http://169.254.169.254/latest",
+                    "http://0.0.0.0:3100/", "file:///etc/passwd", "ftp://example.com/", "http://x.localhost/"):
+            self.assertFalse(server._public_target(bad), bad)
+
+    def test_same_origin_rule_for_the_state_relay(self):
+        class H:
+            def __init__(self, host, origin=None):
+                self.headers = {"Host": host}
+                if origin: self.headers["Origin"] = origin
+        self.assertTrue(server._same_origin(H("192.168.1.5:3100")))                                 # no Origin
+        self.assertTrue(server._same_origin(H("192.168.1.5:3100", "http://192.168.1.5:3100")))     # another screen of ours
+        self.assertFalse(server._same_origin(H("localhost:3100", "https://evil.example")))
+
+
+class TestFetchersDoNotPassOffOldData(unittest.TestCase):
+    def test_own_cache_covers_a_failure_only_briefly(self):
+        import time
+        fresh = {"t": time.time() - 60, "data": "[1]"}
+        old = {"t": time.time() - 3 * 86400, "data": "[1]"}
+        self.assertEqual(server._fresh_or_error(fresh, 900, "x unavailable"), "[1]")
+        self.assertIn("error", server._fresh_or_error(old, 900, "x unavailable"))
+        self.assertIn("error", server._fresh_or_error({"t": 0, "data": None}, 900, "x unavailable"))
+
+    def test_health_table_is_bounded(self):
+        server._health.clear()
+        for i in range(500):
+            server.health_note("feed:h%d" % i, "x", False, 1, "e")
+        self.assertLessEqual(len(server._health), 120)
+        self.assertIsNone(server._health_key("/telegram", "ch=not_a_real_channel_%d" % 7))
+        server._health.clear()

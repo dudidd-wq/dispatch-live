@@ -67,8 +67,55 @@ class TestClamping(Tmp):
             "news": {"custom": [{"name": "F", "url": "https://x.test/rss", "region": "world"},
                                 {"name": "G", "url": "file:///etc/passwd"}]}})
         c = dlconfig.load()
-        self.assertEqual([(x["id"], x["name"], x["type"]) for x in c["channels"]["custom"]], [("custom1", "A", "hls")])
+        self.assertEqual([(x["name"], x["type"]) for x in c["channels"]["custom"]], [("A", "hls")])
         self.assertEqual([(x["name"], x["region"]) for x in c["news"]["custom"]], [("F", "world")])
+
+
+class TestHostileConfig(Tmp):
+    def test_list_prefs_must_be_lists_of_ids(self):
+        # a wrong type here used to throw in the page and kill the whole deck
+        for bad in ("ch11", "{}", 5, True, "[1,2]", '{"a":1}', "[[\"x\"]]", "not json"):
+            self.write("config.local.json", {"prefs": {"dl-tv": bad, "dl-news-off": bad}})
+            p = dlconfig.load()["prefs"]
+            self.assertIsNone(p["dl-tv"], bad); self.assertIsNone(p["dl-news-off"], bad)
+        self.write("config.local.json", {"prefs": {"dl-tv": '["ch14","kan11"]'}})
+        self.assertEqual(json.loads(dlconfig.load()["prefs"]["dl-tv"]), ["ch14", "kan11"])
+
+    def test_scalar_prefs_are_typed(self):
+        self.write("config.local.json", {"prefs": {"dl-lat": "abc", "dl-lng": "34.7", "dl-news-region": "mars",
+                                                   "dl-news-relevant": "maybe", "dl-shelter-sec": "-5",
+                                                   "dl-featured": "<img src=x onerror=1>", "dl-sound": "off"}})
+        p = dlconfig.load()["prefs"]
+        self.assertTrue(all(p[k] is None for k in ("dl-lat", "dl-lng", "dl-news-region", "dl-news-relevant",
+                                                   "dl-shelter-sec", "dl-featured")))
+        self.assertNotIn("dl-sound", p)             # device-local: never shared between screens
+
+    def test_unmergeable_or_unencodable_files_fall_back_to_defaults(self):
+        deep = "{" + '"a":{' * 3000 + "}" * 3000 + "}"
+        self.write("config.local.json", deep)
+        self.assertEqual(dlconfig.load()["traffic"]["minDelay"], 10)
+        self.write("config.local.json", '{"prefs":{"dl-city":"\\ud800x"},"markets":[["^GSPC","\\ud800"]]}')
+        json.dumps(dlconfig.load(), ensure_ascii=False).encode("utf-8")       # must not raise
+
+    def test_custom_ids_do_not_shift_when_an_entry_is_deleted(self):
+        two = {"channels": {"custom": [{"name": "A", "src": "https://x.test/a.m3u8"},
+                                       {"name": "B", "src": "https://x.test/b.m3u8"}]}}
+        self.write("config.local.json", two)
+        b_id = dlconfig.load()["channels"]["custom"][1]["id"]
+        two["channels"]["custom"].pop(0)
+        self.write("config.local.json", two)
+        self.assertEqual(dlconfig.load()["channels"]["custom"][0]["id"], b_id)
+
+    def test_simultaneous_patches_both_land(self):
+        import threading
+        for i in range(25):
+            dlconfig.save_local({})
+            ts = [threading.Thread(target=dlconfig.patch_local, args=({"prefs": {"dl-city": "A"}},)),
+                  threading.Thread(target=dlconfig.patch_local, args=({"traffic": {"minDelay": 14}},))]
+            for t in ts: t.start()
+            for t in ts: t.join()
+            c = dlconfig.load()
+            self.assertEqual((c["prefs"]["dl-city"], c["traffic"]["minDelay"]), ("A", 14))
 
 
 class TestSave(Tmp):

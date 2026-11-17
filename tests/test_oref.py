@@ -39,11 +39,15 @@ class TestHistoryChain(unittest.TestCase):
         self.real = server.fetch_oref
         server._hist_week.update(t=0.0, rows=None)
         self.calls = []
+        self._async = server._archive_async
+        server._archive_async = lambda rows: dlarchive.add_alerts(rows)     # synchronous in tests
+        server._backfill["t"] = __import__("time").time()                   # no background back-fill
         self._db = dlarchive.DB_PATH          # never touch the real archive
         dlarchive.DB_PATH = os.path.join(tempfile.mkdtemp(), "archive.db")
 
     def tearDown(self):
         server.fetch_oref = self.real
+        server._archive_async = self._async
         dlarchive.DB_PATH = self._db
 
     def _serve(self, table):
@@ -83,6 +87,33 @@ class TestHistoryChain(unittest.TestCase):
         self.assertTrue(ok); self.assertEqual(len(rows), 3)
         self.assertEqual(rows[0]["alertDate"], "2026-11-13 03:00:07")
         self.assertEqual(server._hist_status["source"], "archive")
+
+    def test_api_down_and_empty_legacy_file_is_an_outage_not_a_quiet_day(self):
+        # the legacy file is empty most of the time; it proves nothing
+        self._serve([("period=", (True, 200, HTML)), ("AlertsHistory.json", (True, 200, "[]"))])
+        ok, st, _ = server.fetch_oref_history()
+        self.assertFalse(ok); self.assertEqual(st, 502)
+
+    def test_week_list_that_cannot_be_refreshed_expires(self):
+        import time
+        server._hist_week.update(t=time.time() - 3 * 86400, rows=[{"alertDate": "2026-11-01 10:00:00", "data": "x"}])
+        self._serve([("period=lastDay", (True, 200, API_EMPTY)), ("period=lastWeek", (False, 502, "{}")),
+                     ("AlertsHistory.json", (True, 200, "[]"))])
+        ok, _, txt = server.fetch_oref_history()
+        self.assertEqual(json.loads(txt), [])            # three-day-old "last week" is not served
+        self.assertIsNone(server._hist_week["rows"])
+
+    def test_archive_is_backfilled_from_the_last_month(self):
+        import time
+        server._backfill["t"] = 0
+        self._serve([("period=lastDay", (True, 200, API_EMPTY)), ("period=lastWeek", (True, 200, API_EMPTY)),
+                     ("period=lastMonth", (True, 200, API_WEEK)), ("AlertsHistory.json", (True, 200, "[]"))])
+        server.fetch_oref_history()
+        for _ in range(40):
+            if len(dlarchive.recent_alerts(days=400)) == 3: break
+            time.sleep(0.05)
+        self.assertEqual(len(dlarchive.recent_alerts(days=400)), 3)
+        self.assertEqual(sum("lastMonth" in u for u in self.calls), 1)
 
     def test_api_gone_uses_legacy_file(self):
         legacy = json.dumps([{"alertDate": "2026-11-13 02:56:06", "title": "t", "data": "c", "category": 1}])
@@ -155,3 +186,22 @@ class TestConcurrentFetch(unittest.TestCase):
         self.assertEqual(server._inflight, {})
         self._slow_upstream(body=b'{"data":["x"]}', delay=0)
         self.assertTrue(server.fetch_oref("https://oref.test/alerts")[0])   # recovers on the next poll
+
+
+class TestAlertShape(unittest.TestCase):
+    """HTTP 200 is not an answer. Only two shapes are."""
+
+    def test_legitimate_shapes(self):
+        self.assertTrue(server._valid_alert_payload("[]"))
+        self.assertTrue(server._valid_alert_payload('{"id":"1","cat":"1","title":"x","data":["a","b"],"desc":"y"}'))
+
+    def test_a_list_of_alerts_is_merged_never_read_as_quiet(self):
+        out = json.loads(server._alert_payload('[{"id":"1","title":"t","data":["a","b"]},{"id":"2","title":"t","data":["b","c"]}]'))
+        self.assertEqual(out["data"], ["a", "b", "c"])
+        self.assertIsNone(server._alert_payload('[{"id":"1","title":"no localities"}]'))
+        self.assertEqual(server._alert_payload("[]"), "[]")
+
+    def test_everything_else_is_a_failure_not_quiet(self):
+        for bad in ("<!DOCTYPE html><title>Page moved</title>", "null", '{"message":"moved"}', '"ok"', "5",
+                    "", '{"data":"not a list"}', "[1,2]", '{"error":"x"}'):
+            self.assertFalse(server._valid_alert_payload(bad), bad)

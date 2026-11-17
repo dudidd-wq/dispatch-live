@@ -51,7 +51,9 @@ CREATE TABLE IF NOT EXISTS traffic (
 
 def _conn():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    c = sqlite3.connect(DB_PATH, timeout=8)
+    # Short timeout: if something else holds the file, give up quickly. The
+    # archive is best-effort and must never stall the deck.
+    c = sqlite3.connect(DB_PATH, timeout=1.5)
     if _ready["path"] != DB_PATH:
         c.executescript(SCHEMA)
         _ready["path"] = DB_PATH
@@ -79,10 +81,15 @@ def add_alerts(rows):
     clean = []
     for r in rows or []:
         try:
-            d, city = str(r.get("alertDate") or "")[:19], str(r.get("data") or "").strip()
-            if len(d) >= 16 and city:
+            d, city = str(r.get("alertDate") or "")[:19], str(r.get("data") or "").strip()[:120]
+            if len(d) == 16:
+                d += ":00"
+            datetime.strptime(d, "%Y-%m-%d %H:%M:%S")          # a real date, or skip the row
+            if city:
                 cat = r.get("category")
-                clean.append((d, city, int(cat) if cat is not None else None,
+                # -1, not NULL: SQLite treats every NULL as distinct in a key,
+                # so NULL-category rows used to be stored again on every poll
+                clean.append((d, city, int(cat) if cat is not None else -1,
                               str(r.get("title") or "")[:120], r.get("rid")))
         except Exception:
             continue
@@ -97,14 +104,26 @@ def add_alerts(rows):
     return _run(go, 0)
 
 
+def il_now(now=None):
+    """Israel local time. alert_date is Israel-time text, so every window over
+    it must be computed in Israel time whatever the machine's zone is."""
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("Asia/Jerusalem")
+        dt = datetime.fromtimestamp(now, tz) if now else datetime.now(tz)
+        return dt.replace(tzinfo=None)
+    except Exception:
+        return datetime.fromtimestamp(now) if now else datetime.now()
+
+
 def recent_alerts(days=30, limit=400):
     """Newest first, in the shape the deck consumes."""
-    since = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    since = (il_now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
 
     def go(c):
         cur = c.execute("SELECT alert_date,title,data,category,rid FROM alerts "
                         "WHERE alert_date >= ? ORDER BY alert_date DESC LIMIT ?", (since, int(limit)))
-        return [{"alertDate": a, "title": t, "data": d, "category": cat, "rid": rid}
+        return [{"alertDate": a, "title": t, "data": d, "category": None if cat == -1 else cat, "rid": rid}
                 for a, t, d, cat, rid in cur.fetchall()]
     return _run(go, [])
 
@@ -173,7 +192,7 @@ def summary(hours=24, now=None):
     now = now or time.time()
     hours = max(1, min(24 * 31, int(hours)))
     since_ts = int(now - hours * 3600)
-    since_s = datetime.fromtimestamp(since_ts).strftime("%Y-%m-%d %H:%M:%S")
+    since_s = il_now(since_ts).strftime("%Y-%m-%d %H:%M:%S")
 
     def go(c):
         a = c.execute("SELECT alert_date,title,data,category FROM alerts WHERE alert_date >= ? "
@@ -229,7 +248,7 @@ def series(days=7, now=None):
     now = now or time.time()
     days = max(1, min(KEEP_DAYS, int(days)))
     since_ts = int(now - days * 86400)
-    since_s = datetime.fromtimestamp(since_ts).strftime("%Y-%m-%d %H:%M:%S")
+    since_s = il_now(since_ts).strftime("%Y-%m-%d %H:%M:%S")
 
     def go(c):
         t = c.execute("SELECT t,score FROM tension WHERE t >= ? ORDER BY t", (since_ts,)).fetchall()
@@ -246,11 +265,11 @@ def series(days=7, now=None):
         tr = c.execute("SELECT t,worst_delay,heavy FROM traffic WHERE t >= ? ORDER BY t", (since_ts,)).fetchall()
         tday = {}
         for ts, wd, heavy in tr:
-            d = datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+            d = il_now(ts).strftime("%Y-%m-%d")
             cur = tday.setdefault(d, {"max": 0, "heavyMinutes": 0})
             cur["max"] = max(cur["max"], wd or 0)
             cur["heavyMinutes"] += 15 if (heavy or 0) > 0 else 0
-        day_list = [(datetime.fromtimestamp(now) - timedelta(days=i)).strftime("%Y-%m-%d")
+        day_list = [(il_now(now) - timedelta(days=i)).strftime("%Y-%m-%d")
                     for i in range(days - 1, -1, -1)]
         return {"days": days, "dayList": day_list, "tension": tension,
                 "alertsPerDay": [per_day.get(d, 0) for d in day_list],
@@ -278,7 +297,7 @@ def prune(now=None):
     """Drop anything older than KEEP_DAYS. Called once a day."""
     now = now or time.time()
     cut_ts = int(now - KEEP_DAYS * 86400)
-    cut_s = datetime.fromtimestamp(cut_ts).strftime("%Y-%m-%d %H:%M:%S")
+    cut_s = il_now(cut_ts).strftime("%Y-%m-%d %H:%M:%S")
 
     def go(c):
         c.execute("DELETE FROM alerts WHERE alert_date < ?", (cut_s,))

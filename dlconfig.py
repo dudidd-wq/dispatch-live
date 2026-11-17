@@ -35,7 +35,7 @@ DEFAULTS = {
         "dl-shelter-sec": None,
         "dl-tv": None, "dl-featured": None, "dl-featured2": None,
         "dl-news-off": None, "dl-news-region": None, "dl-news-relevant": None,
-        "dl-sound": None,
+        # dl-sound is deliberately NOT here: muting one screen must not mute the others
     },
     "channels": {"custom": []},      # [{id, name, type: hls|iframe, src}]
     "news": {"custom": []},          # [{id, name, url, region: il|world}]
@@ -88,7 +88,58 @@ def _num(v, lo, hi, default):
 
 
 def _text(v, limit):
-    return str(v)[:limit] if isinstance(v, (str, int, float)) else ""
+    if isinstance(v, bool) or not isinstance(v, (str, int, float)):
+        return ""
+    # drop lone surrogates and control characters: they cannot be sent as UTF-8
+    s = str(v).encode("utf-8", "ignore").decode("utf-8", "ignore")
+    return "".join(ch for ch in s if ch >= " " or ch in "\t")[:limit]
+
+
+def _stable_id(prefix, src):
+    """An id derived from the address, not from the position in the list -
+    deleting one custom channel must not hand its on/off state to the next."""
+    import hashlib
+    return prefix + hashlib.sha1(src.encode("utf-8", "replace")).hexdigest()[:8]
+
+
+def _id_list(v):
+    """A pref that the deck JSON.parses into a list of ids. Returns the JSON
+    text, or None when it is anything else - the deck builds a Set from it and
+    a wrong type used to kill the whole page."""
+    try:
+        d = json.loads(v) if isinstance(v, str) else v
+        if isinstance(d, list) and all(isinstance(x, str) and 0 < len(x) <= 60 for x in d) and len(d) <= 200:
+            return json.dumps(d, ensure_ascii=False)
+    except Exception:
+        pass
+    return None
+
+
+def _pref(key, v):
+    """Type-check one preference; None means 'not set'."""
+    import re
+    if v is None:
+        return None
+    if key in ("dl-tv", "dl-news-off"):
+        return _id_list(v)
+    v = _text(v, 80).strip()
+    if not v:
+        return None
+    if key in ("dl-lat", "dl-lng"):
+        try:
+            f = float(v)
+            return v if f == f and -180 <= f <= 180 else None
+        except Exception:
+            return None
+    if key == "dl-shelter-sec":
+        return v if v.isdigit() and 0 < int(v) <= 3600 else None
+    if key == "dl-news-region":
+        return v if v in ("all", "il", "world") else None
+    if key == "dl-news-relevant":
+        return v if v in ("0", "1") else None
+    if key in ("dl-featured", "dl-featured2"):
+        return v if re.match(r"^[A-Za-z0-9_\-]{1,40}$", v) else None
+    return v[:60]                                   # dl-city
 
 
 def sanitize(cfg):
@@ -99,8 +150,9 @@ def sanitize(cfg):
 
     prefs = cfg.get("prefs") if isinstance(cfg.get("prefs"), dict) else {}
     for k in PREF_KEYS:
-        v = prefs.get(k)
-        out["prefs"][k] = None if v is None else _text(v, 4000)
+        out["prefs"][k] = _pref(k, prefs.get(k))
+    if (out["prefs"]["dl-lat"] is None) != (out["prefs"]["dl-lng"] is None):
+        out["prefs"]["dl-lat"] = out["prefs"]["dl-lng"] = None      # half a coordinate is no coordinate
 
     t = cfg.get("traffic") if isinstance(cfg.get("traffic"), dict) else {}
     dt = d["traffic"]
@@ -142,7 +194,7 @@ def sanitize(cfg):
         src = _text(c.get("src"), 600).strip()
         name = _text(c.get("name"), 40).strip()
         if name and src.lower().startswith(("http://", "https://")):
-            chans.append({"id": "custom%d" % (i + 1), "name": name,
+            chans.append({"id": _stable_id("c", src), "name": name,
                           "type": "iframe" if c.get("type") == "iframe" else "hls", "src": src})
     out["channels"] = {"custom": chans}
 
@@ -155,7 +207,7 @@ def sanitize(cfg):
         url = _text(c.get("url"), 600).strip()
         name = _text(c.get("name"), 40).strip()
         if name and url.lower().startswith(("http://", "https://")):
-            feeds.append({"id": "cfeed%d" % (i + 1), "name": name, "url": url,
+            feeds.append({"id": _stable_id("f", url), "name": name, "url": url,
                           "region": "world" if c.get("region") == "world" else "il"})
     out["news"] = {"custom": feeds}
 
@@ -169,34 +221,65 @@ def load_local():
 
 
 def load():
-    """The effective configuration: defaults < config.json < config.local.json."""
-    merged = deep_merge(deep_merge(DEFAULTS, _read(CONFIG_PATH)), load_local())
-    return sanitize(merged)
+    """The effective configuration: defaults < config.json < config.local.json.
+    Never raises: a file that cannot be merged or cleaned (absurd nesting, a
+    type nobody expected) yields the defaults, flagged, instead of taking the
+    deck down."""
+    try:
+        merged = deep_merge(deep_merge(DEFAULTS, _read(CONFIG_PATH)), load_local())
+        return sanitize(merged)
+    except Exception as e:
+        out = copy.deepcopy(DEFAULTS)
+        out["configError"] = "%s: %s" % (type(e).__name__, str(e)[:80])
+        return out
 
 
 def save_local(obj):
     """Replace config.local.json. Returns (ok, message)."""
     if not isinstance(obj, dict):
         return False, "config must be a JSON object"
-    raw = json.dumps(obj, ensure_ascii=False, indent=2)
-    if len(raw.encode("utf-8")) > MAX_BYTES:
+    try:
+        raw = json.dumps(obj, ensure_ascii=False, indent=2)
+    except Exception as e:
+        return False, "config is not valid JSON data: %s" % str(e)[:80]
+    if len(raw.encode("utf-8", "replace")) > MAX_BYTES:
         return False, "config too large"
     with _lock:
-        tmp = LOCAL_PATH + ".tmp"
-        try:
-            with open(tmp, "w", encoding="utf-8") as f:
-                f.write(raw)
-            os.replace(tmp, LOCAL_PATH)
-        except Exception as e:
-            return False, "could not write config.local.json: %s" % e
-    return True, "saved"
+        return _write_local(raw)
+
+
+def _write_local(raw):
+    import time as _t
+    tmp = LOCAL_PATH + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(raw)
+        for attempt in range(5):
+            try:
+                os.replace(tmp, LOCAL_PATH)
+                return True, "saved"
+            except PermissionError:          # Windows: another process has the file open for a moment
+                _t.sleep(0.05 * (attempt + 1))
+        return False, "config.local.json is in use by another program"
+    except Exception as e:
+        return False, "could not write config.local.json: %s" % e
 
 
 def patch_local(patch):
-    """Deep-merge a partial object into config.local.json."""
+    """Deep-merge a partial object into config.local.json. The read, the merge
+    and the write happen under one lock, so two saves at the same moment both
+    land instead of one silently replacing the other."""
     if not isinstance(patch, dict):
         return False, "patch must be a JSON object"
-    return save_local(deep_merge(load_local(), patch))
+    with _lock:
+        try:
+            merged = deep_merge(load_local(), patch)
+            raw = json.dumps(merged, ensure_ascii=False, indent=2)
+        except Exception as e:
+            return False, "config could not be merged: %s" % str(e)[:80]
+        if len(raw.encode("utf-8", "replace")) > MAX_BYTES:
+            return False, "config too large"
+        return _write_local(raw)
 
 
 def mtime():
