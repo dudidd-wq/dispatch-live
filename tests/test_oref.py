@@ -298,3 +298,31 @@ class TestListMerge(unittest.TestCase):
                         {"id": "2", "cat": "10", "title": "בדקות הקרובות צפויות להתקבל התרעות באזורך", "data": ["עכו"]})
         self.assertEqual(m["data"], ["עכו"])                # the heads-up is the more urgent of the two
         self.assertEqual(m["ended"], ["חיפה"])
+
+
+class TestOnlyOrefIsStrict(unittest.TestCase):
+    def test_markets_and_other_feeds_keep_the_recorded_fallback(self):
+        import ssl, urllib.error
+        calls = []
+        real = server.urlopen
+        def fake(req, timeout=None, context=None):
+            calls.append(context)
+            if context is server._SSL_CTX:
+                raise urllib.error.URLError(ssl.SSLCertVerificationError("certificate verify failed"))
+            class R:
+                status = 200
+                headers = {}
+                def read(s, *a): return b'{"chart":{}}'
+                def __enter__(s): return s
+                def __exit__(s, *a): return False
+            return R()
+        server.urlopen = fake
+        server._tls_unverified.clear()
+        try:
+            ok, st, txt = server.fetch_oref("https://query1.finance.yahoo.com/v8/finance/chart/X?t=strict-test")
+        finally:
+            server.urlopen = real
+        self.assertTrue(ok, txt)
+        self.assertEqual(calls, [server._SSL_CTX, server._SSL_LOOSE])
+        self.assertIn("query1.finance.yahoo.com", server._tls_unverified)
+        server._tls_unverified.clear()

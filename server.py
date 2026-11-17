@@ -454,7 +454,12 @@ def fetch_oref(url):
     result = (False, 502, '{"error":"oref fetch failed"}')
     req = Request(url, headers=OREF_HEADERS)
     try:
-        with open_url(req, 12, strict=True) as resp:
+        # Alerts are never read unverified. The other sources that share this
+        # function (markets, quakes, air, flights) keep the recorded fallback:
+        # in v81 they were strict too, and on a PC whose certificate store
+        # lacks a root, markets went "unavailable".
+        strict = (urlparse(url).hostname or "").endswith("oref.org.il")
+        with open_url(req, 12, strict=strict) as resp:
             raw = resp.read()
             raw = _decompress(raw, (resp.headers.get("Content-Encoding") or "").lower())
             text = _decode_feed(raw)
