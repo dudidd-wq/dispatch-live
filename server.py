@@ -2325,6 +2325,8 @@ def hayomyom_entry(hdate):
     key = " ".join(str(hdate or "").split()).lower()
     key = re.sub(r"\s+\d{4}$", "", key)            # "11 Kislev 5787" -> "11 kislev"
     text = _hayom_cache["data"].get(key)
+    if not text and key.endswith(" adar"):         # a common year: the book's leap-year Adar II
+        text = _hayom_cache["data"].get(key + " ii") or _hayom_cache["data"].get(key + " i")
     return {"day": hdate, "text": text} if text else None
 
 

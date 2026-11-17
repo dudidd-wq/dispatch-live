@@ -31,7 +31,7 @@ from urllib.parse import urlparse
 
 REPO = os.environ.get("DL_UPDATE_REPO", "dudidd-wq/dispatch-live")
 API_LATEST = "https://api.github.com/repos/%s/releases/latest"
-PROGRAM_FILES = ("index.html", "server.py", "brain.py", "dlconfig.py", "dlarchive.py", "dlupdate.py",
+PROGRAM_FILES = ("index.html", "server.py", "brain.py", "dlconfig.py", "dlarchive.py", "dlupdate.py", "make_hayomyom.py",
                  "README.md", "CHANGELOG.md")
 LAUNCHER_RE = re.compile(r"^[A-Za-z0-9_-]+\.(bat|sh|command)$")
 DOC_RE = re.compile(r"^docs/[A-Za-z0-9_-]+\.md$")
