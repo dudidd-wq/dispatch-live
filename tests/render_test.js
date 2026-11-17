@@ -28,7 +28,8 @@ const PORT = process.env.PORT || '3187';
     browser = await chromium.launch();
     const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
     const errors = [];
-    page.on('pageerror', e => errors.push(e.message));
+    // errors thrown inside an embedded third-party player (a TV channel's own page) are not ours
+    page.on('pageerror', e => { if (!/Blocked a frame with origin/.test(e.message)) errors.push(e.message); });
     await page.goto('http://127.0.0.1:' + PORT + '/', { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(4000);
     const rows = [
@@ -96,6 +97,61 @@ const PORT = process.env.PORT || '3187';
       await page.unroute('**/oref/alerts');
     }
     await page.evaluate(() => { hideTakeover && hideTakeover(); });
+
+    // The siren must make sound on a page nobody has touched (the deck reloads
+    // itself every few hours): count real oscillators, do not stub playSiren.
+    {
+      const fresh = await (await browser.newContext()).newPage();
+      await fresh.addInitScript(() => {
+        window.__osc = 0;
+        const AC = window.AudioContext || window.webkitAudioContext;
+        const orig = AC.prototype.createOscillator;
+        AC.prototype.createOscillator = function () { window.__osc++; return orig.call(this); };
+      });
+      await fresh.goto('http://127.0.0.1:' + PORT + '/', { waitUntil: 'domcontentloaded' });
+      await fresh.waitForTimeout(2000);
+      const osc = await fresh.evaluate(() => { window.__osc = 0;
+        handleAlertData({ id: 's1', cat: '1', title: 'ירי רקטות וטילים', data: ['בת ים'], desc: 'היכנסו למרחב המוגן' });
+        return window.__osc; });
+      console.log('siren oscillators on an untouched page:', osc);
+      if (!(osc > 0)) fail('the siren makes no sound on a freshly loaded page');
+      await fresh.context().close();
+    }
+
+    // The classifier fails safe: body text can never turn an attack into an all-clear.
+    const kinds = await page.evaluate(() => [
+      { cat: '1', title: 'ירי רקטות וטילים', desc: 'היכנסו למרחב המוגן ושהו בו 10 דקות, לאחר מכן ניתן לצאת' },
+      { cat: '3', title: 'רעידת אדמה', desc: 'אם לא ניתן לצאת מהמבנה היכנסו לממ"ד' },
+      { cat: '7', title: 'אירוע חומרים מסוכנים', desc: 'הישארו בבתים עד להודעה כי ניתן לצאת' },
+      { cat: '13', title: 'חדירת מחבלים', desc: 'אינכם יכולים לצאת' },
+      { cat: '6', title: 'חדירת כלי טיס עוין', desc: 'בדקות הקרובות ייתכנו התרעות נוספות' },
+      { cat: '10', title: 'עדכון', desc: 'ההתרעה טרם הסתיימה' },
+      { cat: '1', title: 'האירוע הסתיים', desc: '' },
+      { cat: '10', title: 'האירוע הסתיים', desc: 'היכנסו למרחב המוגן' },
+      { title: 'התרעה כלשהי שאיננו מכירים', desc: '' },
+      { cat: '10', title: 'האירוע הסתיים', desc: 'השוהים במרחב המוגן יכולים לצאת' },
+      { cat: '10', title: 'בדקות הקרובות צפויות להתקבל התרעות באזורך', desc: '' },
+    ].map(alertKind));
+    console.log('classifier:', kinds.join(','));
+    if (kinds.slice(0, 9).some(k => k !== 'attack')) fail('a message that may be an attack was classified as ' + kinds.slice(0, 9).join(','));
+    if (kinds[9] !== 'ended' || kinds[10] !== 'early') fail('ended/early not recognised: ' + kinds.slice(9).join(','));
+
+    // A second siren restarts the protected stay, and "you may leave" never shows while the alert is on.
+    const stay = await page.evaluate(async () => {
+      localStorage.setItem('dl-city', 'בת ים');
+      const calls = []; const orig = window.startShelterCountdown;
+      window.startShelterCountdown = a => { calls.push(1); return orig(a); };
+      handleAlertData({ id: 'r1', cat: '1', title: 'ירי רקטות וטילים', data: ['בת ים'], desc: '' });
+      handleAlertData({ id: 'r1', cat: '1', title: 'ירי רקטות וטילים', data: ['בת ים'], desc: '' });   // same siren, next poll
+      const afterSame = calls.length;
+      handleAlertData({ id: 'r2', cat: '1', title: 'ירי רקטות וטילים', data: ['בת ים'], desc: '' });   // a new siren
+      window.startShelterCountdown = orig;
+      const out = { afterSame, afterNew: calls.length };
+      handleAlertData([]);
+      return out;
+    });
+    console.log('stay restart:', JSON.stringify(stay));
+    if (!(stay.afterNew > stay.afterSame)) fail('a new siren does not restart the protected-stay countdown');
 
     // "the event has ended" and an early warning are not attacks: no siren, no takeover
     await page.evaluate(() => { window.__sirens = 0; window.playSiren = () => { window.__sirens++; }; });

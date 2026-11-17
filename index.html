@@ -1463,7 +1463,7 @@
     </div>
     <div class="brand-text">
       <div class="brand-title"><span class="live-dot" id="sysDot"></span>חדר <span style="color:var(--live)">מצב</span></div>
-      <div class="brand-sub" id="brandSub">DISPATCH LIVE · IL <b class="build-tag" title="גרסת הקבצים שרצה כרגע — אם אחרי עדכון המספר לא השתנה, מוגשת גרסה ישנה">v17.11-78</b></div>
+      <div class="brand-sub" id="brandSub">DISPATCH LIVE · IL <b class="build-tag" title="גרסת הקבצים שרצה כרגע — אם אחרי עדכון המספר לא השתנה, מוגשת גרסה ישנה">v17.11-79</b></div>
     </div>
   </div>
 
@@ -3086,8 +3086,47 @@ function initAudio() {
   // Simple oscillator-based siren (no external file needed)
   try { alertAudio = new (window.AudioContext||window.webkitAudioContext)(); } catch {}
 }
+// The audio context used to be created only when someone toggled the sound
+// button, so after any page load - including the deck's own 3-hourly reload -
+// the siren was silent while the button showed "on".
+function ensureAudio() {
+  if (!alertAudio) initAudio();
+  try { if (alertAudio && alertAudio.state === 'suspended') alertAudio.resume().catch(() => {}); } catch {}
+  renderAudioBlocked();
+  return alertAudio;
+}
+function renderAudioBlocked() {
+  // say so when the browser will not let us make a sound
+  const blocked = state.alertSound && (!alertAudio || alertAudio.state !== 'running');
+  let el = $('audioBlocked');
+  if (!blocked) { if (el) el.hidden = true; return; }
+  if (!el) {
+    el = document.createElement('div'); el.id = 'audioBlocked';
+    el.style.cssText = 'position:fixed;bottom:8px;inset-inline-end:8px;z-index:1200;padding:6px 13px;border-radius:8px;cursor:pointer;' +
+      'background:rgba(153,27,27,0.95);border:1px solid #f87171;color:#fff;font:700 13px Assistant,Rubik,sans-serif';
+    el.textContent = '🔇 הדפדפן חוסם את צליל ההתרעה — לחצו כאן להפעלה';
+    el.addEventListener('click', () => { ensureAudio(); setTimeout(renderAudioBlocked, 300); });
+    document.body.appendChild(el);
+  }
+  el.hidden = false;
+}
+function playChime() {            // a short double tone: heads-up, not a siren
+  if (!state.alertSound || !ensureAudio()) return;
+  try {
+    const ctx = alertAudio, t0 = ctx.currentTime;
+    for (const [i, f] of [[0, 660], [1, 880]]) {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.frequency.value = f; g.gain.setValueAtTime(0.0001, t0 + i * 0.28);
+      g.gain.exponentialRampToValueAtTime(0.25, t0 + i * 0.28 + 0.03);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + i * 0.28 + 0.24);
+      o.connect(g); g.connect(ctx.destination); o.start(t0 + i * 0.28); o.stop(t0 + i * 0.28 + 0.26);
+    }
+  } catch {}
+}
 function playSiren() {
-  if (!state.alertSound || !alertAudio) return;
+  if (!state.alertSound) return;
+  ensureAudio();
+  if (!alertAudio) return;
   try {
     const ctx = alertAudio; const now = ctx.currentTime;
     for (let i=0;i<3;i++){
@@ -3146,18 +3185,27 @@ async function pollAlerts() {
 // ahead of time, that alerts are expected - sounding the siren and ordering
 // people into the shelter for "the event has ended" is the worst possible
 // reading of it.
+// FAIL SAFE: a message is an attack unless everything says otherwise. Only the
+// TITLE may declare "ended" or "early warning", only at its start, and only
+// for the feed's news category (cat 10) or no category. Instructions often
+// contain phrases like "afterwards you may leave" - the body text must never
+// be able to turn an attack into an all-clear.
 function alertKind(data) {
-  const t = (data.title || '') + ' ' + (data.desc || '');
-  if (/האירוע הסתיים|הסתיים האירוע|ניתן לצאת|יכולים לצאת|הסתיימה|חזרה לשגרה/.test(t)) return 'ended';
-  if (/בדקות הקרובות|צפויות להתקבל התרעות|הנחיה מקדימה|התרעה מקדימה/.test(t)) return 'early';
-  return 'attack';
+  const title = String(data.title || '').trim(), desc = String(data.desc || '');
+  const cat = parseInt(data.cat, 10);
+  const ended = /^(האירוע הסתיים|ניתן לצאת מהמרחב המוגן|סיום האירוע)/.test(title);
+  const early = /^(בדקות הקרובות|התרעה מקדימה|הנחיה מקדימה)/.test(title);
+  if (!ended && !early) return 'attack';
+  if (!isNaN(cat) && cat !== 10) return 'attack';
+  if (/היכנסו|הכנסו|תפסו מחסה/.test(desc)) return 'attack';
+  return ended ? 'ended' : 'early';
 }
 let _noticeTimer = null;
 function showLiveNotice(kind, title, cities) {
   let el = $('liveNotice');
   if (!el) {
     el = document.createElement('div'); el.id = 'liveNotice';
-    el.style.cssText = 'position:fixed;top:64px;left:50%;transform:translateX(-50%);z-index:70;max-width:80vw;padding:12px 22px;' +
+    el.style.cssText = 'position:fixed;top:64px;left:50%;transform:translateX(-50%);z-index:1100;max-width:80vw;padding:12px 22px;' +
       'border-radius:12px;font:800 19px Heebo,Assistant,sans-serif;color:#fff;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,.6)';
     document.body.appendChild(el);
   }
@@ -3168,6 +3216,7 @@ function showLiveNotice(kind, title, cities) {
   el.innerHTML = `${kind === 'ended' ? '✓' : '⚠'} ${esc(title)}${hitsMe ? ' · ' + esc(mine) : ''}
     <div style="font:600 13px Assistant,sans-serif;opacity:.92;margin-top:4px">${esc(cities.slice(0, 8).join(' · '))}${cities.length > 8 ? ' ועוד ' + (cities.length - 8) : ''}</div>`;
   el.hidden = false;
+  if (kind === 'early' && hitsMe) playChime();
   clearTimeout(_noticeTimer);
   _noticeTimer = setTimeout(() => { el.hidden = true; }, kind === 'ended' ? 90e3 : 240e3);
 }
@@ -3184,13 +3233,22 @@ function handleAlertData(data) {
     // not an attack: no siren, no takeover, no shelter countdown
     state.lastAlertId = id;
     state.alertActive = false;
+    // Oref announcing the end of the event for our area ends the protected stay
+    if (kind === 'ended') {
+      const me = alertTouchesMe(cities);
+      if (me.city || me.region) endShelterStay();
+    }
     hideTakeover();
     setAlertChrome(false, 0);
     showLiveNotice(kind, title, cities);
   } else if (hasAlert && cities.length) {
-    if (id !== state.lastAlertId) { state.lastAlertId = id; playSiren(); }
+    const fresh = id !== state.lastAlertId;
+    if (fresh) { state.lastAlertId = id; playSiren(); }
     state.alertActive = true;
     showTakeover(title, desc, cities);
+    // every new siren starts the protected stay again: ten minutes count
+    // from the LAST alert, not the first
+    if (fresh) startShelterCountdown(cities);
     setAlertChrome(true, cities.length);
   } else {
     state.alertActive = false;
@@ -3214,6 +3272,14 @@ function setAlertChrome(hot, n) {
 let _shelterTimer = null;
 const SHELTER_STAY_SEC = 10 * 60;
 
+function endShelterStay() {
+  const card = $('shelterCard');
+  if (_shelterTimer) { clearInterval(_shelterTimer); _shelterTimer = null; }
+  card.classList.remove('mine'); card.classList.add('safe');
+  $('scCount').textContent = '✓';
+  $('scPhase').textContent = 'ניתן לצאת מהמרחב המוגן';
+  $('scNote').textContent = 'פיקוד העורף הודיע על סיום האירוע · הישמעו להנחיות';
+}
 function startShelterCountdown(areas) {
   const card = $('shelterCard');
   const me = alertTouchesMe(areas);
@@ -3250,6 +3316,12 @@ function startShelterCountdown(areas) {
       $('scCount').textContent = `${m}:${String(s).padStart(2, '0')}`;
       $('scPhase').textContent = 'הישארו במרחב המוגן';
       $('scNote').textContent = 'ניתן לצאת רק לאחר 10 דקות, אלא אם ניתנה הנחיה אחרת';
+      if (left <= 0 && state.alertActive) {
+        // time is up but the alert is still on: never say "you may leave"
+        $('scCount').textContent = '0:00';
+        $('scPhase').textContent = 'הישארו במרחב המוגן — ההתראה עדיין פעילה';
+        return;
+      }
       if (left <= 0) {
         phase = 3;
         card.classList.remove('mine'); card.classList.add('safe');
@@ -4651,6 +4723,9 @@ $('healthRun').addEventListener('click', async () => {
   }
   $('healthRun').disabled = false; $('healthRun').textContent = 'הרץ בדיקה עכשיו';
 });
+setTimeout(() => { if (state.alertSound) ensureAudio(); }, 0);
+for (const ev of ['pointerdown', 'keydown', 'touchstart']) addEventListener(ev, () => { if (state.alertSound) ensureAudio(); }, { passive: true });
+setInterval(renderAudioBlocked, 15000);
 setTimeout(refreshSysHealth, 6000);
 setInterval(refreshSysHealth, 60000);
 
@@ -4813,6 +4888,7 @@ function renderSettings(resp) {
   $('setSound').addEventListener('change', e => {      // this screen only; no Save needed
     try { LS_RAW.set.call(localStorage, 'dl-sound', e.target.checked ? 'on' : 'off'); } catch {}
     state.alertSound = e.target.checked;
+    if (e.target.checked) ensureAudio(); else renderAudioBlocked();
     $('setMsg').textContent = e.target.checked ? 'צליל ההתרעה במסך הזה פעיל.' : 'צליל ההתרעה במסך הזה כבוי.';
   });
   _setPrev = { tv: j(p['dl-tv'], null), off: j(p['dl-news-off'], []) };
@@ -4960,7 +5036,7 @@ document.addEventListener('keydown', e => {
   if (!$('archiveOverlay').hidden) $('archiveOverlay').hidden = true;
 });
 
-const DL_BUILD = '17.11-78';
+const DL_BUILD = '17.11-79';
 console.log('%cDispatch LIVE build ' + DL_BUILD, 'color:#22d3ee;font-weight:bold');
 const TENSION_W = { alerts: 0.50, idf: 0.20, news: 0.30 };  // component weights
 const TENSION_BASELINE = 12;   // structural background level for Israel

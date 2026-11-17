@@ -92,11 +92,20 @@ class TestSelfTest(unittest.TestCase):
         r = self._result("traffic")
         self.assertFalse(r["ok"]); self.assertIn("key rejected", r["detail"])
 
-    def test_brain_not_running_is_caught(self):
+    def test_brain_not_running_is_caught_only_when_traffic_is_set_up(self):
+        import tempfile
         self._all_good()
         server.brain_get = lambda p: None
-        server.run_selftest()
-        self.assertFalse(self._result("traffic")["ok"])
+        root = server.ROOT
+        try:
+            server.ROOT = tempfile.mkdtemp()
+            server.run_selftest()
+            self.assertIsNone(self._result("traffic")["ok"])         # no key: traffic is simply not in use
+            open(os.path.join(server.ROOT, "google.key"), "w").write("k")
+            server.run_selftest()
+            self.assertFalse(self._result("traffic")["ok"])           # key present, service down: a real fault
+        finally:
+            server.ROOT = root
 
     def test_a_crashing_probe_does_not_stop_the_rest(self):
         self._all_good()
@@ -271,6 +280,21 @@ class TestProxyHops(unittest.TestCase):
         ok, status, text = server.fetch_public("http://public.test:%d/secret" % self.port)
         self.assertEqual(len(self.resolutions), 1)             # resolved once; the checked address is the one used
         self.assertNotEqual(server.fetch_public("http://public.test:%d/secret" % self.port)[1], 200)
+
+    def test_a_dead_first_address_falls_back_to_the_next(self):
+        import socket
+        real_conn, port = self._conn, self.port
+        real_gai = self._gai
+        def gai(host, p, *a, **k):
+            if host == "public.test":
+                return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.99", p)),
+                        (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", p))]
+            return real_gai(host, p, *a, **k)
+        server.socket.getaddrinfo = gai
+        # .99 is dead (nothing listens on the port it is mapped to); .34 is the stand-in server
+        server._pinned_connection = lambda scheme, host, p, ip, timeout: real_conn(
+            scheme, host, p if ip == "93.184.216.34" else 9, "127.0.0.1", timeout)
+        self.assertEqual(server.fetch_public("http://public.test:%d/page" % port), (True, 200, "<rss>ok</rss>"))
 
     def test_addresses_that_are_not_the_public_internet(self):
         for bad in ("http://100.64.1.1/", "http://[::ffff:127.0.0.1]/", "http://2130706433/", "http://0x7f.1/",

@@ -1997,12 +1997,25 @@ def fetch_public(target, max_hops=5, max_bytes=6 * 1024 * 1024):
                 return False, 400, "Only public web addresses can be fetched"
             port = u.port or (443 if u.scheme == "https" else 80)
             try:
-                ip = _public_addresses(u.hostname, port)[0]
+                ips = _public_addresses(u.hostname, port)
             except _NotPublic:
                 return False, 400, "Only public web addresses can be fetched"
             except _Unresolvable as e:
                 return False, 502, "Upstream fetch failed: could not resolve %s (%s)" % (u.hostname, str(e)[:60])
-            conn = _pinned_connection(u.scheme, u.hostname, port, ip, TIMEOUT)
+            # A PC with no IPv6 route, or a host with one dead address, must
+            # fall through to the next address - as urlopen always did.
+            conn, last_err = None, None
+            for ip in ips[:6]:
+                c = _pinned_connection(u.scheme, u.hostname, port, ip, TIMEOUT)
+                try:
+                    c.connect()
+                    conn = c
+                    break
+                except OSError as e:
+                    last_err = e
+                    c.close()
+            if conn is None:
+                return False, 502, "Upstream fetch failed: %s" % last_err
             try:
                 path = (u.path or "/") + (("?" + u.query) if u.query else "")
                 conn.request("GET", path, headers=BROWSER_HEADERS)
@@ -2044,17 +2057,30 @@ def _alert_payload(text):
             return "[]"
         if not all(isinstance(x, dict) and isinstance(x.get("data"), list) for x in d):
             return None
+        # several messages at once: an attack outranks "event ended" / early
+        # warning, and only messages of the chosen kind are merged - an
+        # all-clear for one town must not relabel another town's siren
+        def is_news(x):
+            return re.match(r"\s*(האירוע הסתיים|ניתן לצאת|סיום האירוע|בדקות הקרובות|התרעה מקדימה|הנחיה מקדימה)",
+                            str(x.get("title") or "")) is not None
+        attacks = [x for x in d if not is_news(x)]
+        chosen = attacks or d
         cities = []
-        for x in d:
+        for x in chosen:
             cities += [c for c in x["data"] if isinstance(c, str) and c not in cities]
-        merged = dict(d[0])
+        if not cities:
+            return None
+        merged = dict(chosen[0])
         merged["data"] = cities
         return json.dumps(merged, ensure_ascii=False)
     if isinstance(d, dict):
         data, cities = d.get("data"), d.get("cities")
         if not (isinstance(data, list) or isinstance(cities, list)):
             return None
-        names = [c for c in (data if isinstance(data, list) and data else cities or []) if isinstance(c, str)]
+        src = data if isinstance(data, list) and data else (cities or [])
+        names = [c for c in src if isinstance(c, str)]
+        if src and not names:
+            return None                  # localities in a form we cannot read: a failure, never "quiet"
         if not names:
             return "[]"                  # an alert object naming no locality alerts nobody
         out = dict(d)
@@ -2308,6 +2334,8 @@ def _probe_json(fn, check, describe):
 def _probe_traffic():
     b = brain_get("/traffic")
     if not b:
+        if not os.path.isfile(os.path.join(ROOT, "google.key")):
+            return None, "התנועה לא מוגדרת (אין google.key)"
         return False, "שירות התנועה (brain.py) לא רץ"
     h = b.get("health") or {}
     if h.get("failing"):
@@ -2368,14 +2396,18 @@ def run_selftest():
 
 def _selftest_loop():
     time.sleep(90)                      # let the first real requests go first
+    streak, last_failed = 0, None
     while True:
         try:
             run_selftest()
         except Exception:
             pass
-        # a failure is re-checked in ten minutes, not tomorrow
-        failed = any(r["ok"] is False for r in _selftest["results"])
-        time.sleep(600 if failed else 24 * 3600)
+        # a failure is re-checked in ten minutes, not tomorrow - but something
+        # that keeps failing is checked hourly, not 144 times a day
+        failed = sorted(r["id"] for r in _selftest["results"] if r["ok"] is False)
+        streak = streak + 1 if failed and failed == last_failed else 0
+        last_failed = failed
+        time.sleep(24 * 3600 if not failed else 600 if streak < 3 else 3600)
 
 
 def _same_origin(handler):

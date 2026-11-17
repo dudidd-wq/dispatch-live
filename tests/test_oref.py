@@ -208,6 +208,12 @@ class TestAlertShape(unittest.TestCase):
         self.assertIsNone(server._alert_payload('[{"id":"1","title":"no localities"}]'))
         # an alert that names no locality alerts nobody; "cities" is honoured when "data" is empty
         self.assertEqual(server._alert_payload('{"id":"1","title":"t","data":[]}'), "[]")
+        # localities we cannot read are a failure, never quiet
+        self.assertIsNone(server._alert_payload('{"title":"t","data":[{"name":"בת ים"}]}'))
+        # an all-clear for one town must not relabel another town's siren
+        both = json.loads(server._alert_payload('[{"title":"האירוע הסתיים","cat":"10","data":["חיפה"]},'
+                                                 '{"title":"ירי רקטות וטילים","cat":"1","data":["בת ים"]}]'))
+        self.assertEqual((both["title"], both["data"]), ("ירי רקטות וטילים", ["בת ים"]))
         self.assertEqual(json.loads(server._alert_payload('{"title":"t","data":[],"cities":["x"]}'))["data"], ["x"])
 
     def test_the_feed_in_every_encoding_it_has_used(self):
