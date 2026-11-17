@@ -85,6 +85,14 @@ class TestSummary(Base):
         dlarchive.prune()
         self.assertEqual(dlarchive.stats()["tension"]["rows"], 1)
 
+    def test_database_deleted_while_running_recovers(self):
+        row = [{"alertDate": stamp(1), "title": "a", "data": "A", "category": 1}]
+        self.assertEqual(dlarchive.add_alerts(row), 1)
+        os.remove(dlarchive.DB_PATH)
+        dlarchive.add_alerts(row)                        # first call after the loss may fail quietly
+        dlarchive.add_alerts(row)
+        self.assertEqual(len(dlarchive.recent_alerts()), 1)   # the archive is working again
+
     def test_unusable_database_never_raises(self):
         dlarchive.DB_PATH = os.path.join(tempfile.mkdtemp(), "data")     # a directory, not a file
         os.makedirs(dlarchive.DB_PATH)
@@ -149,7 +157,7 @@ class TestLastGoodAnswer(unittest.TestCase):
     def test_cache_is_bounded(self):
         for i in range(140):
             server._remember_good("/fetch?url=%d" % i, 200, b"x", "text/plain")
-        self.assertLessEqual(len(server._last_good), 91)
+        self.assertLessEqual(len(server._last_good), 60)
 
 
 if __name__ == "__main__":

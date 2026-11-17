@@ -69,6 +69,7 @@ def _run(fn, default):
             finally:
                 c.close()
     except Exception:
+        _ready["path"] = None       # e.g. the file was deleted while running: rebuild the schema next time
         return default
 
 

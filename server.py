@@ -363,12 +363,35 @@ def _end_fetch(key):
         _inflight.pop(key, None)
 
 
+_oref_shared = {}        # url -> (finished_at, result) of the most recent fetch
+
+
 def fetch_oref(url):
     """Fetch an Oref endpoint with the headers it requires. Returns (ok, status, text).
     The realtime endpoint returns an empty body when there's no active alert —
-    we normalize that to '[]' so the browser always gets valid JSON."""
+    we normalize that to '[]' so the browser always gets valid JSON.
+
+    Only one request per URL goes upstream at a time. A second caller WAITS for
+    that answer and shares it. Until v76 the second caller got an instant 429
+    error instead - so two screens polling together (PC + phone, or the deck
+    and the self-test) made each other report "no connection to Oref"."""
+    started = time.time()
     if not _begin_fetch(url):
-        return False, 429, '{"error":"fetch already in flight"}'
+        deadline = started + 13
+        while time.time() < deadline:
+            time.sleep(0.05)
+            hit = _oref_shared.get(url)
+            if hit and hit[0] >= started:
+                return hit[1]                     # the answer that was in flight
+            if not _inflight.get(url):
+                break                             # it ended before we looked: fetch ourselves
+        else:
+            return False, 504, '{"error":"oref fetch timed out waiting for an earlier request"}'
+        if not _begin_fetch(url):                 # lost the race again: share once more
+            time.sleep(0.2)
+            hit = _oref_shared.get(url)
+            return hit[1] if hit else (False, 429, '{"error":"fetch already in flight"}')
+    result = (False, 502, '{"error":"oref fetch failed"}')
     req = Request(url, headers=OREF_HEADERS)
     try:
         with urlopen(req, timeout=12, context=_SSL_CTX) as resp:
@@ -377,11 +400,13 @@ def fetch_oref(url):
             text = raw.decode("utf-8-sig", errors="replace").strip()  # utf-8-sig strips BOM
             if not text:
                 text = "[]"   # quiet = no active alert
-            return True, resp.status, text
+            result = (True, resp.status, text)
     except Exception as e:
-        return False, 502, '{"error":"oref fetch failed: %s"}' % str(e).replace('"', "'")
+        result = (False, 502, '{"error":"oref fetch failed: %s"}' % str(e).replace('"', "'"))
     finally:
+        _oref_shared[url] = (time.time(), result)   # publish before releasing the slot
         _end_fetch(url)
+    return result
 
 
 def _normalize_oref_api(text):
@@ -1755,10 +1780,10 @@ _last_good_lock = threading.Lock()
 
 
 def _remember_good(cache_id, status, body, ctype):
-    if len(body) > 1500000:
+    if len(body) > 700000:               # 60 entries x 700 KB bounds this at ~40 MB
         return
     with _last_good_lock:
-        if len(_last_good) > 90 and cache_id not in _last_good:
+        if len(_last_good) >= 60 and cache_id not in _last_good:
             oldest = min(_last_good, key=lambda k: _last_good[k][0])
             _last_good.pop(oldest, None)
         _last_good[cache_id] = (time.time(), body, ctype)

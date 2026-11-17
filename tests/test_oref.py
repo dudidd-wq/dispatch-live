@@ -102,3 +102,56 @@ class TestHistoryChain(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestConcurrentFetch(unittest.TestCase):
+    """Two screens (or the deck and the self-test) asking at the same moment."""
+
+    def setUp(self):
+        self._urlopen = server.urlopen
+        server._inflight.clear(); server._oref_shared.clear()
+        self.upstream_calls = 0
+
+    def tearDown(self):
+        server.urlopen = self._urlopen
+
+    def _slow_upstream(self, body=b"[]", fail=False, delay=0.25):
+        import io, time as _t
+        test = self
+
+        class Resp(io.BytesIO):
+            status = 200
+            headers = {}
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+
+        def fake(req, timeout=None, context=None):
+            test.upstream_calls += 1
+            _t.sleep(delay)
+            if fail:
+                raise OSError("connection refused")
+            return Resp(body)
+        server.urlopen = fake
+
+    def _race(self, n=4):
+        import threading
+        out = []
+        ts = [threading.Thread(target=lambda: out.append(server.fetch_oref("https://oref.test/alerts"))) for _ in range(n)]
+        for t in ts: t.start()
+        for t in ts: t.join()
+        return out
+
+    def test_simultaneous_callers_share_one_upstream_request(self):
+        self._slow_upstream()
+        out = self._race(4)
+        self.assertEqual([r[0] for r in out], [True] * 4)       # nobody is told "no connection"
+        self.assertEqual(self.upstream_calls, 1)
+
+    def test_a_real_failure_is_shared_too_and_the_slot_is_released(self):
+        self._slow_upstream(fail=True)
+        out = self._race(3)
+        self.assertEqual([r[0] for r in out], [False] * 3)
+        self.assertTrue(all("connection refused" in r[2] for r in out))
+        self.assertEqual(server._inflight, {})
+        self._slow_upstream(body=b'{"data":["x"]}', delay=0)
+        self.assertTrue(server.fetch_oref("https://oref.test/alerts")[0])   # recovers on the next poll
